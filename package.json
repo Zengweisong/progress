@@ -1,0 +1,28 @@
+{
+  "name": "shixu-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "description": "拾序：项目进展与个人知识库交互原型",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "android:build": "powershell -NoProfile -File scripts/build-android.ps1",
+    "check": "node --check public/app.js && node --check public/data.js && node --check public/designs.js && node --check public/layouts.js && node --check public/layouts-focus-journal.js && node --check public/layouts-matrix-route.js && node --check public/sync-client.js && node --check public/sync-db.js && node --check public/sync-merge.js && node --check public/sync-ui.js && node --check public/sw.js && node --check server/sync-api.mjs && node --check server.mjs",
+    "test": "playwright test",
+    "test:unit": "node --test tests/sync-*.test.mjs",
+    "test:sync": "playwright test -c playwright.sync.config.js"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "1.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@tauri-apps/cli": "^2.12.3"
+  }
+}

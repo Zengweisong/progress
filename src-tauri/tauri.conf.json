@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "拾序",
+  "mainBinaryName": "shixu",
+  "version": "0.1.0",
+  "identifier": "app.shixu.workspace",
+  "build": {
+    "frontendDist": "https://8.147.235.91",
+    "devUrl": "https://8.147.235.91"
+  },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "title": "拾序 · 项目与知识工作台",
+      "width": 1280,
+      "height": 840,
+      "minWidth": 560,
+      "minHeight": 600,
+      "center": true,
+      "backgroundColor": "#f8f9fc",
+      "devtools": false,
+      "dragDropEnabled": false
+    }],
+    "security": { "capabilities": [], "csp": null },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "shortDescription": "项目、任务与个人知识工作台",
+    "longDescription": "拾序桌面客户端。支持项目进展、快速记录、知识笔记和多端同步，连接你的拾序云端服务。",
+    "category": "Productivity",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "拾序"
+      }
+    }
+  }
+}

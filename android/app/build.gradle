@@ -1,0 +1,32 @@
+plugins { id 'com.android.application' }
+
+def signingFile = rootProject.file('../.signing/android/keystore.properties')
+def signingValues = new Properties()
+if (signingFile.exists()) signingFile.withInputStream { signingValues.load(it) }
+
+android {
+    namespace 'app.shixu.workspace'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'app.shixu.workspace'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+    signingConfigs {
+        release {
+            if (signingFile.exists()) {
+                storeFile rootProject.file('../.signing/android/shixu-release.jks')
+                storePassword signingValues.getProperty('storePassword')
+                keyAlias 'shixu'
+                keyPassword signingValues.getProperty('keyPassword')
+            }
+        }
+    }
+    buildTypes {
+        release { signingConfig signingConfigs.release; minifyEnabled false; debuggable false }
+        debug { applicationIdSuffix '.debug'; debuggable true }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+}

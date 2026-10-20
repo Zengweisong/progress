@@ -1,0 +1,33 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      PUBLIC_ORIGIN: https://${SITE_ADDRESS:?请在 .env 中设置 SITE_ADDRESS}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      REGISTRATION_CODE: ${REGISTRATION_CODE:?请在 .env 中设置注册邀请码}
+    volumes:
+      - shixu_data:/app/data
+    expose:
+      - "4173"
+    security_opt:
+      - no-new-privileges:true
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?请在 .env 中设置 SITE_ADDRESS}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  shixu_data:
+  caddy_data:
+  caddy_config:
