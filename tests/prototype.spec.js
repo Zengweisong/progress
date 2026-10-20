@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 
 test('project creation, task progress and saved view survive reload', async ({ page }) => {
   await page.goto('/');
-  await page.locator('.page-heading').getByRole('button', { name: '新建项目' }).click();
+  await page.locator('.workspace-projects .toolbar').getByRole('button', { name: '新建项目' }).click();
   await page.getByRole('textbox', { name: '项目名称', exact: true }).fill('跨端验证项目');
   await page.getByRole('textbox', { name: '项目说明', exact: true }).fill('验证数据保留和视图一致性。');
   await page.getByRole('combobox', { name: '状态', exact: true }).selectOption('active');
@@ -36,7 +36,7 @@ test('project creation, task progress and saved view survive reload', async ({ p
 test('project pickers keep the draft when Escape closes the menu', async ({ page }) => {
   await page.goto('/');
   test.skip(!await page.evaluate(() => CSS.supports('appearance', 'base-select')), 'Customizable native pickers are unavailable');
-  await page.locator('.page-heading').getByRole('button', { name: '新建项目' }).click();
+  await page.locator('.workspace-projects .toolbar').getByRole('button', { name: '新建项目' }).click();
   const dialog = page.getByRole('dialog', { name: '新建项目', exact: true });
   const title = dialog.getByRole('textbox', { name: '项目名称', exact: true });
   await title.fill('保留这份草稿');
@@ -67,11 +67,9 @@ test('note editing, safe Markdown rendering and bidirectional project links', as
   await page.getByRole('textbox', { name: '标题', exact: true }).fill('我的知识验证笔记');
   await page.getByRole('textbox', { name: '内容', exact: true }).fill('# 实践笔记\n\n记录一个可复用的方法。');
   await page.getByRole('button', { name: '创建笔记', exact: true }).click();
-  await page.getByRole('button', { name: '编辑', exact: true }).click();
   await page.getByRole('textbox', { name: '笔记正文' }).fill('# 实践笔记\n\n- 有价值的经验\n\n<img src=x onerror=alert(1)>');
-  await page.getByRole('button', { name: '阅读', exact: true }).click();
-  await expect(page.locator('.markdown')).toContainText('有价值的经验');
-  await expect(page.locator('.markdown img')).toHaveCount(0);
+  await expect(page.locator('.live-note-editor')).toContainText('有价值的经验');
+  await expect(page.locator('.live-note-editor img:not(.cm-widgetBuffer)')).toHaveCount(0);
   await page.getByRole('button', { name: '关联', exact: true }).click();
   await page.getByLabel('个人知识库 2.0', { exact: true }).check();
   await page.getByRole('button', { name: '保存关联', exact: true }).click();
@@ -79,8 +77,7 @@ test('note editing, safe Markdown rendering and bidirectional project links', as
   await expect(page.locator('.linked-note', { hasText: '我的知识验证笔记' })).toBeVisible();
   await page.locator('.linked-note', { hasText: '我的知识验证笔记' }).click();
   await page.reload();
-  await page.getByRole('button', { name: '阅读', exact: true }).click();
-  await expect(page.locator('.markdown')).toContainText('有价值的经验');
+  await expect(page.locator('.live-note-editor')).toContainText('有价值的经验');
   await expect(page.locator('.project-link-chip')).toContainText('个人知识库 2.0');
 });
 
@@ -156,7 +153,7 @@ test('export/import preserve relations without replacing existing content', asyn
 test('layout, navigation and prototype sync state have no runtime errors', async ({ page }, testInfo) => {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '下一站，完成。', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '我的项目', exact: true })).toHaveCount(1);
   await page.screenshot({ path: `docs/screenshots/${testInfo.project.name}-projects.png`, fullPage: true, animations: 'disabled' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('button', { name: '打开项目：个人知识库 2.0', exact: true }).click();

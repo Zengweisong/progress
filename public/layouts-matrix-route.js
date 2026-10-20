@@ -1,4 +1,4 @@
-import { taskStatus, taskStates } from './project-tasks.js';
+import { taskStatus, taskStates, taskGroups, renderTaskAdd, renderModuleName } from './project-tasks.js';
 
 const phaseLabels = { planned: '待开始', active: '进行中', review: '待回顾', done: '已完成' };
 const routeColors = ['#2a7769', '#ac6439', '#726a9e', '#557998', '#a8792c', '#8e6581', '#58846b', '#727c88'];
@@ -56,16 +56,24 @@ export function renderRoute(ctx) {
   const selectedNotes = selected ? data.notes.filter(note => note.projectIds.includes(selected.id)) : [];
   const completedTasks = data.projects.flatMap(project => project.tasks).filter(task => task.done).length;
   return `<section class="view-route" aria-label="路线图版面">
-    <header class="mr-route-heading"><div><span class="mr-kicker">ROUTE MAP / 让进展看得见</span><h1>下一站，<em>完成。</em></h1><p>每个项目一条线，每个任务一站。勾亮一站，就向前一步。</p></div><div class="mr-route-total"><strong>${completedTasks}</strong><span>个任务已抵达</span><div class="mr-route-mini-track"><i></i><i></i><i></i><i></i></div></div></header>
+    ${compact ? '' : `<header class="mr-route-heading"><div><span class="mr-kicker">ROUTE MAP / 让进展看得见</span><h1>下一站，<em>完成。</em></h1><p>每个项目一条线，每个任务一站。勾亮一站，就向前一步。</p></div><div class="mr-route-total"><strong>${completedTasks}</strong><span>个任务已抵达</span><div class="mr-route-mini-track"><i></i><i></i><i></i><i></i></div></div></header>`}
     <div class="mr-route-toolbar">${filters(state)}${compact ? '' : '<div class="mr-route-key"><span><i class="is-done"></i>已完成</span><span><i></i>待完成</span><small>按任务顺序排列 · 非时间轴</small></div>'}</div>
     <div class="mr-route-workspace"><div class="mr-route-lines">
       ${projects.map(project => {
         const index = data.projects.indexOf(project);
         const color = routeColors[index % routeColors.length];
-        const next = project.tasks.find(task => !task.done);
+        const groups = compact ? taskGroups(project, true) : [{ id: '', name: '', tasks: project.tasks }];
+        const grouped = compact && Boolean(project.modules?.length);
         return `<article class="mr-route-line ${selected?.id === project.id ? 'is-selected' : ''}" style="--route-color:${color}" aria-label="${esc(project.title)}任务路线">
           <header class="mr-line-heading"><button class="mr-line-select" type="button" data-select-project="${esc(project.id)}" aria-pressed="${selected?.id === project.id}"><span class="mr-line-number">${String(index + 1).padStart(2, '0')}</span><span><strong>${esc(project.title)}</strong><small>${esc(phaseLabels[project.status])} <i>·</i> ${project.tasks.filter(task => task.done).length}/${project.tasks.length} 站完成</small></span></button><span class="mr-line-percent">${pct(project)}<small>%</small></span></header>
-          <div class="mr-stations-scroll" tabindex="0" aria-label="${esc(project.title)}任务，可横向滚动"><div class="mr-stations">${project.tasks.map((task, taskIndex) => `<label ${compact ? `data-route-task="${esc(task.id)}" data-route-project="${esc(project.id)}" title="拖动圆点调整顺序；Alt + 左右方向键也可移动"` : ''} class="mr-station ${taskStatus(task) === 'active' ? 'is-active' : ''} ${task.done ? 'is-done' : ''} ${task.id === next?.id ? 'is-next' : ''}"><input type="checkbox" data-task="${esc(task.id)}" data-project-id="${esc(project.id)}" ${task.done ? 'checked' : ''} aria-label="${esc(task.title)}"><span class="mr-station-dot">${task.done ? icon('check') : `<span>${taskIndex + 1}</span>`}</span><span class="mr-station-title">${esc(task.title)}</span><span class="mr-station-hint">${compact ? taskStates[taskStatus(task)] : task.done ? '已完成' : task.id === next?.id ? '下一站' : '待完成'}</span></label>`).join('') || '<p class="mr-empty">路线还没有站点，在右侧添加第一项任务。</p>'}</div></div>
+          <div class="mr-module-routes">${groups.map(group => {
+            const next = group.tasks.find(task => !task.done);
+            return `<section class="mr-module-route" data-route-module="${esc(group.id)}" ${compact ? `data-task-zone data-project-id="${esc(project.id)}" data-module-id="${esc(group.id)}" data-task-view="route" aria-label="${esc(group.name)}模块线路"` : ''}>
+              ${compact ? `<header class="mr-module-heading">${renderModuleName(project, group, { esc, icon })}<span>${group.tasks.filter(task => task.done).length}/${group.tasks.length} 站完成</span></header>` : ''}
+              <div class="mr-stations-scroll" tabindex="0" aria-label="${esc(project.title)}${grouped ? ` · ${esc(group.name)}` : ''}任务，可横向滚动"><div class="mr-stations">${group.tasks.map((task, taskIndex) => `<label ${compact ? `data-route-task="${esc(task.id)}" data-route-project="${esc(project.id)}" title="拖动圆点调整顺序或移至其他模块；Alt + 左右排序，上下切换模块"` : ''} class="mr-station ${taskStatus(task) === 'active' ? 'is-active' : ''} ${task.done ? 'is-done' : ''} ${task.id === next?.id ? 'is-next' : ''}"><input type="checkbox" data-task="${esc(task.id)}" data-project-id="${esc(project.id)}" ${task.done ? 'checked' : ''} aria-label="${esc(task.title)}"><span class="mr-station-dot">${task.done ? icon('check') : `<span>${taskIndex + 1}</span>`}</span><span class="mr-station-title">${esc(task.title)}</span><span class="mr-station-hint">${compact ? taskStates[taskStatus(task)] : task.done ? '已完成' : task.id === next?.id ? '下一站' : '待完成'}</span></label>`).join('') || `<p class="mr-empty">${grouped ? '此模块暂无事项，拖入事项或在下方添加。' : '路线还没有站点，在下方添加第一项事项。'}</p>`}</div></div>
+              ${compact ? renderTaskAdd(project, group, { esc, icon, scope: 'route' }) : ''}
+            </section>`;
+          }).join('')}</div>
         </article>`;
       }).join('') || '<div class="mr-empty">没有符合条件的项目。试试其他筛选条件。</div>'}
       ${compact ? '' : `<p class="mr-route-caption">${icon('route')}点击站点完成任务；点击线路名称，切换右侧记录项目。</p>`}

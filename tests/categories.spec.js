@@ -189,7 +189,7 @@ for (const [section, category, title] of [
     } else {
       expect(saved.notes).toHaveLength(initial.notes.length + 1);
       expect(saved.notes[0]).toMatchObject({ title, category, inbox: section === 'inbox', projectIds: [] });
-      await expect(page.locator('#note-body')).toHaveValue('## 分类中直接创建\n\n**保留 Markdown**');
+      await expect(page.locator('#note-body')).toContainText('保留 Markdown');
       await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
       await expect(page.locator('.note-card').filter({ hasText: title })).toHaveCount(1);
     }

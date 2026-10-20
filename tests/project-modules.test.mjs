@@ -1,8 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { seedData, validateData } from '../public/data.js';
-import { taskStatus, setTaskStatus } from '../public/project-tasks.js';
+import { taskStatus, setTaskStatus, taskGroups, moduleOptions } from '../public/project-tasks.js';
 import { mergeWorkspaces, resolveWorkspaceConflicts } from '../public/sync-merge.js';
+
+test('default group names survive backup and merge without changing task membership', () => {
+  const base = seedData(), local = structuredClone(base), remote = structuredClone(base);
+  local.projects[0].ungroupedName = '总体';
+  remote.projects[0].tasks[3].done = true;
+  const { data, conflicts } = mergeWorkspaces(base, local, remote);
+  assert.equal(conflicts.length, 0);
+  assert.equal(taskGroups(data.projects[0])[0].name, '总体');
+  assert.deepEqual(moduleOptions(data.projects[0])[0], ['', '总体']);
+  assert.deepEqual(data.projects[0].tasks, remote.projects[0].tasks);
+  assert.deepEqual(validateData(JSON.parse(JSON.stringify(data))), data);
+  assert.equal(taskGroups(base.projects[0])[0].name, '未分组');
+  for (const name of ['', '  ', 'a'.repeat(61), 42, null]) {
+    const invalid = structuredClone(base); invalid.projects[0].ungroupedName = name;
+    assert.throws(() => validateData(invalid));
+  }
+});
 
 test('old completion records load unchanged and new task states count independently', () => {
   const data = seedData(), original = structuredClone(data);
