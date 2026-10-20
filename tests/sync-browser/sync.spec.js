@@ -44,6 +44,22 @@ async function secondDevice(browser, username) {
   return { context, page };
 }
 
+test('note image attachments sync to a second device and render without local files', async ({ page, browser }) => {
+  const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
+  await page.goto('/#knowledge/note/n1');
+  const png = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 80; canvas.height = 60; canvas.getContext('2d').fillRect(0, 0, 80, 60); return canvas.toDataURL('image/png').split(',')[1]; });
+  await page.locator('#note-image-upload').setInputFiles({ name: '同步图片.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+  await expect(page.locator('.cm-note-image img')).toHaveCount(1);
+  await page.getByRole('button', { name: '关闭笔记', exact: true }).click(); await sync(page);
+  const other = await secondDevice(browser, username);
+  try {
+    await other.page.goto('/#knowledge/note/n1');
+    await expect(other.page.locator('.cm-note-image img')).toHaveCount(1);
+    await expect.poll(() => other.page.locator('.cm-note-image img').evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+    expect((await stored(other.page)).notes.find(note => note.id === 'n1').attachments).toHaveLength(1);
+  } finally { await other.context.close(); }
+});
+
 test('real registration and two-device sync, editing deferral and offline reload merge', async ({ page, browser }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
@@ -58,9 +74,7 @@ test('real registration and two-device sync, editing deferral and offline reload
     await b.page.reload();
     expect((await stored(b.page)).projects[0].title).toBe('手机离线修改');
     await page.goto('/#knowledge/note/n1');
-    await page.getByRole('button', { name: '编辑', exact: true }).click();
     await page.getByRole('textbox', { name: '笔记正文' }).fill('电脑端独立新增的笔记内容');
-    await page.getByRole('button', { name: '阅读', exact: true }).click();
     await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
     await sync(page);
     await b.context.setOffline(false); await sync(b.page); await sync(page);

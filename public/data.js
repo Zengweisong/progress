@@ -53,6 +53,7 @@ export function validateData(value) {
     if (p.due && !/^\d{4}-\d{2}-\d{2}$/.test(p.due)) fail();
     ids.add(p.id);
     if (p.modules !== undefined && (!Array.isArray(p.modules) || p.modules.length > 100)) fail();
+    if (p.ungroupedName !== undefined && (!str(p.ungroupedName, 60) || !p.ungroupedName.trim())) fail();
     const moduleIds = new Set();
     for (const module of p.modules || []) {
       if (!module || !str(module.id, 100) || !module.id || moduleIds.has(module.id) || !str(module.name, 60) || !module.name.trim()) fail();
@@ -71,6 +72,15 @@ export function validateData(value) {
   for (const n of value.notes) {
     if (!n || !str(n.id, 100) || noteIds.has(n.id) || !str(n.title, 200) || !n.title.trim() || !str(n.body, 200000) || !str(n.summary) || !str(n.category, 100) || !Array.isArray(n.tags) || !n.tags.every(t => str(t, 60)) || !Array.isArray(n.projectIds) || !n.projectIds.every(id => ids.has(id)) || typeof n.inbox !== 'boolean' || !str(n.updatedAt, 50) || Number.isNaN(Date.parse(n.updatedAt))) fail();
     noteIds.add(n.id);
+    if (n.attachments !== undefined) {
+      if (!Array.isArray(n.attachments) || n.attachments.length > 50) fail();
+      const attachmentIds = new Set(); let attachmentSize = 0;
+      for (const asset of n.attachments) {
+        if (!asset || !str(asset.id, 100) || !/^[\w-]+$/.test(asset.id) || attachmentIds.has(asset.id) || !str(asset.name, 200) || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(asset.mime) || !str(asset.data, 400000) || !new RegExp(`^data:${asset.mime};base64,[A-Za-z0-9+/]+={0,2}$`).test(asset.data)) fail();
+        attachmentIds.add(asset.id); attachmentSize += asset.data.length;
+      }
+      if (attachmentSize > 2 * 1024 * 1024) fail();
+    }
   }
   const fieldIds = new Set();
   for (const f of value.fields) {

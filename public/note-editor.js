@@ -1,5 +1,3 @@
-import { renderMarkdown } from './markdown.js';
-
 const tools = [
   ['heading', '标题', 'H₂'], ['bold', '加粗', '<b>B</b>', 'Ctrl+B'],
   ['italic', '斜体', '<i>I</i>', 'Ctrl+I'], ['quote', '引用', '“'],
@@ -8,13 +6,11 @@ const tools = [
   ['code', '代码块', '&lt;/&gt;'], ['table', '插入表格', 'table'],
 ];
 
-export function renderMarkdownTools(icon) {
-  return `<div class="markdown-tools" role="group" aria-label="Markdown 格式">${tools.map(([action, label, glyph, shortcut]) => `<button type="button" data-md-action="${action}" aria-label="${label}" title="${label}${shortcut ? ` (${shortcut})` : ''}">${glyph === 'link' || glyph === 'table' ? icon(glyph) : `<span aria-hidden="true">${glyph}</span>`}</button>`).join('')}</div>`;
+export function renderMarkdownTools(icon, images = false) {
+  return `<div class="markdown-tools" role="group" aria-label="Markdown 格式">${tools.map(([action, label, glyph, shortcut]) => `<button type="button" data-md-action="${action}" aria-label="${label}" title="${label}${shortcut ? ` (${shortcut})` : ''}">${glyph === 'link' || glyph === 'table' ? icon(glyph) : `<span aria-hidden="true">${glyph}</span>`}</button>`).join('')}${images ? '<button type="button" data-action="insert-note-image" aria-label="插入图片" title="插入图片，也可直接粘贴或拖入"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2"/><circle cx="7" cy="7" r="1"/><path d="m3 14 4-4 3 3 3-5 4 6"/></svg></button>' : ''}</div>`;
 }
 
-export function renderNotePage({ note, mode, esc, icon, categories, getProject }) {
-  const editing = mode !== 'preview';
-  const preview = mode !== 'edit';
+export function renderNotePage({ note, esc, icon, categories, getProject }) {
   return `<section class="note-workspace" aria-label="笔记编辑器：${esc(note.title)}">
     <h1 class="note-sr-only" tabindex="-1">笔记编辑器</h1>
     <header class="note-page-toolbar">
@@ -29,14 +25,8 @@ export function renderNotePage({ note, mode, esc, icon, categories, getProject }
         <label class="note-property note-tags-property" for="note-tags"><span>标签</span><input id="note-tags" data-edit-note="tags" maxlength="300" value="${esc(note.tags.join('，'))}" placeholder="添加标签，用逗号分隔"></label>
         <div class="note-property note-projects-property"><span>关联项目</span><div class="project-links">${note.projectIds.map(id => { const project = getProject(id); return project ? `<button class="project-link-chip" data-project="${esc(id)}">${icon(project.icon)}${esc(project.title)}</button>` : ''; }).join('')}<button class="note-link-project" data-action="link-projects" data-id="${esc(note.id)}" aria-label="关联">${icon('plus')}关联</button></div></div>
       </div>
-      <div class="note-mode-bar"><span class="note-format-label">Markdown</span><div class="note-mode-tabs" role="group" aria-label="文档模式">${[['edit', '编辑'], ['split', '分屏预览'], ['preview', '阅读']].map(([value, label]) => `<button data-editor-mode="${value}" class="${mode === value ? 'active' : ''} ${value === 'split' ? 'note-split-toggle' : ''}" aria-pressed="${mode === value}">${label}</button>`).join('')}</div></div>
-      <div class="note-paper ${mode === 'split' ? 'is-split' : ''} ${mode === 'preview' ? 'is-reading' : ''}">
-        ${editing ? renderMarkdownTools(icon) : ''}
-        <div class="note-panes">
-          ${editing ? `<div class="note-source-pane"><div class="note-pane-label">MARKDOWN</div><textarea class="note-source" id="note-body" data-edit-note="body" aria-label="笔记正文" maxlength="200000" spellcheck="false" placeholder="从这里开始写作，支持 Markdown…">${esc(note.body)}</textarea></div>` : ''}
-          ${preview ? `<div class="note-preview-pane"><div class="note-pane-label">${mode === 'split' ? '实时预览' : '阅读'}</div><article class="markdown note-markdown" id="note-preview">${renderMarkdown(note.body)}</article></div>` : ''}
-        </div>
-      </div>
+      <div class="note-paper note-live-paper">${renderMarkdownTools(icon, true)}<div id="live-note-editor" class="live-note-editor"></div></div>
+      <input id="note-image-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" multiple hidden>
       <footer class="note-document-footer"><span>${icon('shield')}修改自动保存在本机</span><span id="note-word-count">${note.body.trim().length.toLocaleString('zh-CN')} 字</span><button class="note-delete" data-action="delete-note" data-id="${esc(note.id)}">${icon('trash')}删除笔记</button></footer>
     </div>
   </section>`;

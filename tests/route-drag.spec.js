@@ -9,7 +9,7 @@ const order = page => stations(page).evaluateAll(nodes => nodes.map(node => node
 test.beforeEach(async ({ page }) => {
   const data = seedData(); data.projects = data.projects.slice(0, 2); data.notes = [];
   data.projects[0].modules = [{ id: 'module', name: '界面' }];
-  data.projects[0].tasks[1].moduleId = 'module';
+  data.projects[0].tasks[4].moduleId = 'module';
   await page.addInitScript(({ key, data }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(data)); }, { key, data });
   await page.goto('/');
 });
@@ -73,7 +73,7 @@ test('failed save restores the old order and preserves capture draft', async ({ 
 test('dragging near the right edge scrolls to later tasks', async ({ page }) => {
   const original = await read(page);
   const start = await input(page, 'p1-t0').boundingBox();
-  const scroll = page.locator('.mr-route-line').filter({ has: page.locator('[data-select-project="p1"]') }).locator('.mr-stations-scroll');
+  const scroll = page.locator('.mr-route-line').filter({ has: page.locator('[data-select-project="p1"]') }).locator('.mr-stations-scroll').first();
   const bounds = await scroll.boundingBox();
   await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2); await page.mouse.down();
   await page.mouse.move(bounds.x + bounds.width - 8, start.y + start.height / 2, { steps: 12 });

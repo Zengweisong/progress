@@ -30,76 +30,57 @@ const example = '<script>codeOnly()</script>';
 
 [不安全链接](javascript:alert(1))`;
 
-test('notes open as a full page, render GFM safely, and preserve Markdown across reload', async ({ page }) => {
+const source = page => page.evaluate(key => {
+  const id = decodeURIComponent(location.hash.split('/').at(-1));
+  return JSON.parse(localStorage.getItem(key)).notes.find(note => note.id === id)?.body;
+}, key);
+
+test('one editable Markdown surface renders GFM safely and persists the original source', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/#knowledge/note/n1');
-  await expect(page.getByRole('region', { name: /^笔记编辑器：/ })).toBeVisible();
-  await expect(page.locator('.overlay, .drawer')).toHaveCount(0);
-  expect(await page.locator('#app').evaluate(el => el.inert)).toBe(false);
   const editor = page.getByRole('textbox', { name: '笔记正文', exact: true });
-  await page.getByRole('button', { name: '分屏预览', exact: true }).click();
-  await editor.fill(body);
-  const preview = page.locator('#note-preview');
-  await expect(preview.locator('h1')).toHaveText('Markdown 标题');
-  await expect(preview.locator('strong')).toHaveText('重点');
-  await expect(preview.locator('em')).toHaveText('斜体');
-  await expect(preview.locator('del')).toHaveText('删除线');
-  await expect(preview.locator('table')).toContainText('编辑器');
-  await expect(preview.locator('ol li')).toHaveCount(2);
-  await expect(preview.locator('input[type=checkbox]')).toHaveCount(2);
-  await expect(preview.locator('input[type=checkbox]').first()).toBeChecked();
-  await expect(preview.locator('pre code')).toContainText('<script>codeOnly()</script>');
-  await expect(preview.locator('img, script')).toHaveCount(0);
-  await expect(preview.getByRole('link', { name: '参考链接' })).toHaveAttribute('rel', 'noopener noreferrer');
-  await expect(preview.getByText('不安全链接', { exact: true })).not.toHaveAttribute('href');
+  await editor.fill(body); await page.locator('#note-title').focus();
+  await expect(page.locator('.cm-md-h1')).toHaveText('Markdown 标题');
+  await expect(page.locator('.cm-md-strong')).toContainText('重点');
+  await expect(page.locator('.cm-md-em')).toContainText('斜体');
+  await expect(page.locator('.cm-md-strike')).toContainText('删除线');
+  await expect(page.locator('.cm-note-table table')).toContainText('编辑器');
+  await expect(page.locator('.cm-md-task')).toHaveCount(2);
+  await expect(page.locator('.live-note-editor img:not(.cm-widgetBuffer), .live-note-editor script')).toHaveCount(0);
   expect(await page.evaluate(() => window.noteInjected)).toBeUndefined();
+  expect(await source(page)).toBe(body);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-  await page.reload();
-  await expect(editor).toHaveValue(body);
-  await page.getByRole('button', { name: '阅读', exact: true }).click();
-  await expect(preview.locator('table')).toBeVisible();
+  await page.reload(); await expect(editor).toBeVisible(); expect(await source(page)).toBe(body);
   expect(errors).toEqual([]);
 });
 
-test('format buttons, keyboard shortcuts, export and local persistence use raw Markdown', async ({ page }) => {
+test('formatting, keyboard shortcuts and export use Markdown in the single editor', async ({ page }) => {
   await page.goto('/#knowledge/note/n1');
   const editor = page.getByRole('textbox', { name: '笔记正文', exact: true });
-  await editor.fill('重要内容');
-  await editor.press('Control+a');
+  await editor.fill('重要内容'); await editor.press('Control+a');
   await page.getByRole('button', { name: '加粗', exact: true }).click();
-  await expect(editor).toHaveValue('**重要内容**');
-  await editor.fill('链接文字');
-  await editor.press('Control+a');
-  await editor.press('Control+k');
-  await expect(editor).toHaveValue('[链接文字](https://example.com)');
+  await expect.poll(() => source(page)).toBe('**重要内容**');
+  await editor.fill('链接文字'); await editor.press('Control+a'); await editor.press('Control+k');
+  await expect.poll(() => source(page)).toBe('[链接文字](https://example.com)');
   await expect(page.getByRole('dialog', { name: '搜索全部' })).toHaveCount(0);
   await editor.fill('快捷键'); await editor.press('Control+a'); await editor.press('Control+b');
-  await expect(editor).toHaveValue('**快捷键**');
-  await editor.fill('');
-  await page.getByRole('button', { name: '插入表格', exact: true }).click();
-  await expect(editor).toHaveValue('| 标题 | 内容 |\n| --- | --- |\n| 项目 | 说明 |');
-  const source = await editor.inputValue();
-  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes.find(n => n.id === 'n1').body, key)).toBe(source);
-  const downloadEvent = page.waitForEvent('download');
-  await page.getByRole('button', { name: '导出 .md', exact: true }).click();
-  const download = await downloadEvent;
-  expect(download.suggestedFilename()).toBe('让知识真正流动起来.md');
-  expect(await readFile(await download.path(), 'utf8')).toBe(source);
-  await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
-  await expect(page).toHaveURL(/#knowledge$/);
+  await expect.poll(() => source(page)).toBe('**快捷键**');
+  await editor.fill(''); await page.getByRole('button', { name: '插入表格', exact: true }).click();
+  const saved = '| 标题 | 内容 |\n| --- | --- |\n| 项目 | 说明 |';
+  await expect.poll(() => source(page)).toBe(saved);
+  const event = page.waitForEvent('download'); await page.getByRole('button', { name: '导出 .md', exact: true }).click();
+  const download = await event; expect(await readFile(await download.path(), 'utf8')).toBe(saved);
+  await page.getByRole('button', { name: '关闭笔记', exact: true }).click(); await expect(page).toHaveURL(/#knowledge$/);
 });
 
-test('cached editor and Markdown rendering work offline', async ({ page, context }) => {
-  await page.goto('/#knowledge/note/n1');
-  await expect(page.locator('#note-body')).toBeVisible();
-  await page.locator('#note-body').fill('# 离线记录\n\n- [x] 本机保存');
+test('live Markdown editor and its bundle work offline', async ({ page, context }) => {
+  await page.goto('/#knowledge/note/n1'); await page.locator('#note-body').fill('# 离线记录\n\n- [x] 本机保存');
+  await expect.poll(() => source(page)).toBe('# 离线记录\n\n- [x] 本机保存');
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
-  await context.setOffline(true);
-  await page.reload();
-  await expect(page.locator('#note-body')).toHaveValue('# 离线记录\n\n- [x] 本机保存');
-  await page.getByRole('button', { name: '阅读', exact: true }).click();
-  await expect(page.locator('#note-preview h1')).toHaveText('离线记录');
-  await expect(page.locator('#note-preview input[type=checkbox]')).toBeChecked();
+  await context.setOffline(true); await page.reload();
+  await expect(page.locator('.cm-md-h1')).toHaveText('离线记录');
+  await expect(page.locator('.cm-md-task')).toBeChecked();
+  expect(await source(page)).toBe('# 离线记录\n\n- [x] 本机保存');
 });
 
 test('quick ideas support Markdown formatting and safe preview, then save the original source', async ({ page }) => {
@@ -132,10 +113,10 @@ test('quick ideas support Markdown formatting and safe preview, then save the or
   expect(bounds.x).toBeGreaterThanOrEqual(0);
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
   await dialog.getByRole('button', { name: '保存到收集箱', exact: true }).click();
-  await expect(page.locator('#note-body')).toHaveValue(body);
+  await expect.poll(() => source(page)).toBe(body);
   expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: 'Markdown 想法', body, inbox: true });
   await page.reload();
-  await expect(page.locator('#note-body')).toHaveValue(body);
+  await expect.poll(() => source(page)).toBe(body);
 });
 
 test('new project notes keep their category and link while switching Markdown modes', async ({ page }) => {
@@ -155,6 +136,6 @@ test('new project notes keep their category and link while switching Markdown mo
   await expect(dialog.getByRole('combobox', { name: '分类', exact: true })).toHaveValue('技术实践');
   await expect(editor).toHaveValue('[参考文档](https://example.com)');
   await dialog.getByRole('button', { name: '创建笔记', exact: true }).click();
-  await expect(page.locator('#note-body')).toHaveValue('[参考文档](https://example.com)');
+  await expect.poll(() => source(page)).toBe('[参考文档](https://example.com)');
   expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: '项目链接笔记', category: '技术实践', inbox: false, projectIds: ['p1'] });
 });

@@ -65,9 +65,8 @@ test('sparse route dots remain visible and views share the same shell', async ({
   const shell = () => page.evaluate(() => ({
     accent: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor,
     background: getComputedStyle(document.querySelector('.page')).backgroundColor,
-    headingFont: getComputedStyle(document.querySelector('.workspace-heading h1')).fontSize,
     toolbarY: document.querySelector('.toolbar').getBoundingClientRect().y,
-    headingY: document.querySelector('.workspace-heading').getBoundingClientRect().y,
+    statsY: document.querySelector('.stats-strip').getBoundingClientRect().y,
   }));
   const initialShell = await shell();
   for (const value of ['board', 'table', 'route']) {

@@ -1,5 +1,6 @@
 import { Marked } from './vendor/markdown/marked.js';
 import DOMPurify from './vendor/markdown/purify.js';
+import { portableMarkdown } from './note-images.js';
 
 const escapeHTML = text => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const parser = new Marked({
@@ -18,9 +19,9 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
   }
 });
 
-export function renderMarkdown(body) {
+export function renderMarkdown(body, attachments = []) {
   if (!body.trim()) return '<p class="markdown-empty">写下第一句话，思考就有了起点。</p>';
-  return DOMPurify.sanitize(parser.parse(body), {
+  return DOMPurify.sanitize(parser.parse(portableMarkdown(body, attachments)), {
     ALLOWED_TAGS: ['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'em', 'strong', 'del', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'input'],
     ALLOWED_ATTR: ['href', 'title', 'src', 'alt', 'class', 'type', 'checked', 'disabled', 'start', 'align'],
   });

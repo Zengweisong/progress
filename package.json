@@ -13,19 +13,28 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "android:build": "powershell -NoProfile -File scripts/build-android.ps1",
-    "check": "node --check public/app.js && node --check public/note-editor.js && node --check public/markdown.js && node --check public/data.js && node --check public/route-task-drag.js && node --check public/project-tasks.js && node --check public/categories.js && node --check public/designs.js && node --check public/layouts.js && node --check public/layouts-focus-journal.js && node --check public/layouts-matrix-route.js && node --check public/sync-client.js && node --check public/sync-db.js && node --check public/sync-merge.js && node --check public/sync-ui.js && node --check public/sw.js && node --check server/sync-api.mjs && node --check server.mjs",
+    "check": "node --check public/app.js && node --check public/live-note-editor.js && node --check public/note-images.js && node --check public/date-picker.js && node --check public/select-control.js && node --check public/note-editor.js && node --check public/markdown.js && node --check public/data.js && node --check public/route-task-drag.js && node --check public/project-tasks.js && node --check public/categories.js && node --check public/designs.js && node --check public/layouts.js && node --check public/layouts-focus-journal.js && node --check public/layouts-matrix-route.js && node --check public/sync-client.js && node --check public/sync-db.js && node --check public/sync-merge.js && node --check public/sync-ui.js && node --check public/sw.js && node --check server/sync-api.mjs && node --check server.mjs",
     "test": "playwright test",
     "test:unit": "node --test tests/*.test.mjs",
     "test:sync": "playwright test -c playwright.sync.config.js",
-    "vendor:markdown": "node scripts/vendor-markdown.mjs"
+    "vendor:markdown": "node scripts/vendor-markdown.mjs",
+    "vendor:editor": "node scripts/vendor-editor.mjs"
   },
   "dependencies": {
     "@chenglou/pretext": "1.0.0",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
+    "@lezer/highlight": "1.2.5",
+    "@lezer/markdown": "1.8.1",
     "dompurify": "3.4.17",
     "marked": "18.1.1"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
-    "@tauri-apps/cli": "^2.12.3"
+    "@tauri-apps/cli": "^2.12.3",
+    "esbuild": "0.28.2"
   }
 }
