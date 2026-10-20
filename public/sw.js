@@ -1,8 +1,10 @@
-const CACHE = 'shixu-shell-v2';
+const CACHE = 'shixu-shell-v6';
 const SHELL = [
   '/', '/index.html', '/layouts.html', '/designs.html', '/favicon.svg',
   '/app.js', '/data.js', '/styles.css', '/designs.js', '/designs.css',
-  '/workspace-route.css',
+  '/workspace-route.css', '/project-tasks.js', '/project-tasks.css', '/route-task-drag.js',
+  '/note-editor.js', '/note-editor.css', '/markdown.js', '/categories.js',
+  '/vendor/markdown/marked.js', '/vendor/markdown/purify.js',
   '/layouts.js', '/layouts.css', '/layouts-focus-journal.js', '/layouts-focus-journal.css',
   '/layouts-matrix-route.js', '/layouts-matrix-route.css',
   '/sync-client.js', '/sync-db.js', '/sync-merge.js', '/sync-ui.js', '/sync-ui.css',

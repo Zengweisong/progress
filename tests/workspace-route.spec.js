@@ -27,6 +27,57 @@ test('default route reads existing workspace; layout choices survive reload with
   }
 });
 
+test('checking route tasks updates only their project without moving the routes', async ({ page }) => {
+  await prepare(page); await page.goto('/');
+  const order = () => page.locator('.mr-line-select').evaluateAll(nodes => nodes.map(node => node.dataset.selectProject));
+  const initialOrder = await order();
+  const initialColor = await projectLine(page, 'p1').evaluate(el => el.style.getPropertyValue('--route-color'));
+  for (const [projectId, taskId, checked, percent] of [
+    ['p1', 'p1-t3', true, '80%'],
+    ['p5', 'p5-t0', true, '33%'],
+    ['p1', 'p1-t4', true, '100%'],
+    ['p1', 'p1-t0', false, '80%'],
+  ]) {
+    await page.locator(`input[data-project-id="${projectId}"][data-task="${taskId}"]`).setChecked(checked);
+    await expect(projectLine(page, projectId).locator('.mr-line-percent')).toHaveText(percent);
+    expect(await order()).toEqual(initialOrder);
+    expect(await projectLine(page, 'p1').evaluate(el => el.style.getPropertyValue('--route-color'))).toBe(initialColor);
+  }
+  const saved = await readData(page);
+  expect(saved.projects.find(p => p.id === 'p1').tasks.filter(t => t.done)).toHaveLength(4);
+  expect(saved.projects.find(p => p.id === 'p5').tasks.filter(t => t.done)).toHaveLength(1);
+  expect(saved.projects.find(p => p.id === 'p2')).toEqual(seedData().projects.find(p => p.id === 'p2'));
+  await page.locator('#sort-select').selectOption('title');
+  expect(await order()).toEqual([...saved.projects].sort((a, b) => a.title.localeCompare(b.title, 'zh-CN')).map(p => p.id));
+});
+
+test('sparse route dots remain visible and views share the same shell', async ({ page }) => {
+  const data = seedData();
+  data.projects = [{ ...data.projects[0], pinned: false, tasks: [{ id: 'single-task', title: '第一步', done: false }] }];
+  data.notes = [];
+  await prepare(page, data); await page.goto('/');
+  await expect(page.locator('[data-route-task="single-task"]')).toContainText('第一步');
+  const dot = await page.locator('.mr-station-dot').boundingBox();
+  const scroll = await page.locator('.mr-stations-scroll').boundingBox();
+  expect(dot.x - 4).toBeGreaterThanOrEqual(scroll.x);
+  expect(dot.y - 4).toBeGreaterThanOrEqual(scroll.y);
+  await expect(page.locator('.project-modules')).toHaveCount(0);
+  const shell = () => page.evaluate(() => ({
+    accent: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor,
+    background: getComputedStyle(document.querySelector('.page')).backgroundColor,
+    headingFont: getComputedStyle(document.querySelector('.workspace-heading h1')).fontSize,
+    toolbarY: document.querySelector('.toolbar').getBoundingClientRect().y,
+    headingY: document.querySelector('.workspace-heading').getBoundingClientRect().y,
+  }));
+  const initialShell = await shell();
+  for (const value of ['board', 'table', 'route']) {
+    await view(page, value).click();
+    expect(await shell()).toEqual(initialShell);
+    expect(await readData(page)).toEqual(data);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  }
+});
+
 test('route completes tasks, adds multiple tasks and saves linked notes in main workspace', async ({ page }) => {
   await prepare(page); await page.goto('/');
   await page.locator('[data-select-project="p2"]').click();
@@ -48,6 +99,39 @@ test('route completes tasks, adds multiple tasks and saves linked notes in main 
   await expect(projectLine(page, 'p2').getByRole('checkbox', { name: '设计文章阅读页', exact: true })).toBeChecked();
   expect(await readData(page)).toEqual(saved);
   expect(await page.evaluate(key => localStorage.getItem(key), labKey)).toBe('independent laboratory data');
+});
+
+test('clicking a selected route opens centered project details and preserves drafts', async ({ page }) => {
+  await prepare(page); await page.goto('/');
+  await page.locator('[data-select-project="p1"]').click();
+  await expect(page.locator('[data-select-project="p1"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.locator('#route-capture-body').fill('项目一的草稿');
+  await projectLine(page, 'p1').getByRole('checkbox', { name: '梳理知识分类与标签', exact: true }).uncheck();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.locator('[data-select-project="p1"]').click();
+  const detail = page.getByRole('dialog', { name: '项目详情：个人知识库 2.0' });
+  await expect(detail).toBeVisible();
+  const box = await detail.boundingBox(), viewport = page.viewportSize();
+  expect(Math.abs(box.x + box.width / 2 - viewport.width / 2)).toBeLessThan(1);
+  expect(Math.abs(box.y + box.height / 2 - viewport.height / 2)).toBeLessThan(1);
+  expect(box.x).toBeGreaterThanOrEqual(10);
+  expect(box.y).toBeGreaterThanOrEqual(10);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width - 10);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height - 10);
+  await page.keyboard.press('Escape');
+  await expect(detail).toHaveCount(0);
+  await expect(page.locator('#route-capture-body')).toHaveValue('项目一的草稿');
+  await projectLine(page, 'p2').locator('.mr-line-percent').click();
+  await expect(page.locator('[data-select-project="p2"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('#route-capture-body')).toHaveValue('');
+  await projectLine(page, 'p2').locator('.mr-line-percent').click();
+  await expect(page.getByRole('dialog', { name: '项目详情：独立博客改版' })).toBeVisible();
+  await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
+  await projectLine(page, 'p1').getByRole('checkbox', { name: '梳理知识分类与标签', exact: true }).check();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('[data-select-project="p2"]')).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('drafts stay with their projects through selection, filters, views and details', async ({ page }) => {

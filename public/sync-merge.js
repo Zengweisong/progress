@@ -1,7 +1,8 @@
 import { validateData } from './data.js';
+import { taskStatus } from './project-tasks.js';
 
 const ABSENT = Symbol('absent');
-const COLLECTIONS = ['projects', 'notes', 'fields'];
+const COLLECTIONS = ['projects', 'notes', 'fields', 'folders'];
 const owns = (value, key) => value != null && Object.hasOwn(value, key);
 const at = (value, key) => owns(value, key) ? value[key] : ABSENT;
 const byId = records => new Map(records.map(record => [record.id, record]));
@@ -34,7 +35,7 @@ function equal(a, b, root = false, ignoreTimestamp = true) {
 export function equalData(a, b) { return equal(a, b, true); }
 
 export function emptyWorkspace() {
-  return { version: 1, projects: [], notes: [], fields: [], preferences: { view: 'board', sort: 'updated', group: 'status' } };
+  return { version: 1, projects: [], notes: [], fields: [], folders: [], preferences: { view: 'board', sort: 'updated', group: 'status' } };
 }
 
 function workspace(value) { return validateData(copy(value ?? emptyWorkspace())); }
@@ -89,11 +90,34 @@ function runMerge(baseValue, localValue, remoteValue, choice) {
     const entries = [];
     for (const key of new Set([...Object.keys(l), ...Object.keys(r), ...Object.keys(b)])) {
       if (key === 'updatedAt') continue;
+      // Completion and status describe one state; merging them separately can
+      // produce an active task whose completion checkbox is still checked.
+      if (collection === 'projects' && path.startsWith(' / 任务 ') && key === 'status') continue;
       const bv = at(b, key), lv = at(l, key), rv = at(r, key);
       let merged;
-      if (collection === 'projects' && !path && key === 'tasks') {
+      if (collection === 'projects' && path.startsWith(' / 任务 ') && key === 'done') {
+        const status = scalar(taskStatus(b), taskStatus(l), taskStatus(r), () => conflict(collection, ownerId, `任务状态在两端修改${path}`));
+        merged = status === 'done';
+        if ([b, l, r].some(task => owns(task, 'status'))) entries.push(['status', status]);
+      } else if (collection === 'projects' && !path && key === 'modules') {
+        const bm = byId(b.modules || []), lm = byId(l.modules || []), rm = byId(r.modules || []);
+        merged = [...new Set([...lm.keys(), ...rm.keys(), ...bm.keys()])].map(id => entity(bm.get(id) ?? ABSENT, lm.get(id) ?? ABSENT, rm.get(id) ?? ABSENT, collection, ownerId, ` / 模块 ${id}`)).filter(module => module !== ABSENT);
+      } else if (collection === 'projects' && !path && key === 'tasks') {
         const bm = byId(b.tasks), lm = byId(l.tasks), rm = byId(r.tasks);
         merged = [...new Set([...lm.keys(), ...rm.keys(), ...bm.keys()])].map(id => entity(bm.get(id) ?? ABSENT, lm.get(id) ?? ABSENT, rm.get(id) ?? ABSENT, collection, ownerId, ` / 任务 ${id}`)).filter(task => task !== ABSENT);
+        const common = new Set(b.tasks.filter(task => lm.has(task.id) && rm.has(task.id)).map(task => task.id));
+        const order = tasks => tasks.filter(task => common.has(task.id)).map(task => task.id);
+        const bo = order(b.tasks), lo = order(l.tasks), ro = order(r.tasks);
+        let preferred = l.tasks;
+        if (!equal(lo, ro)) {
+          if (equal(lo, bo)) preferred = r.tasks;
+          else if (!equal(ro, bo)) {
+            conflict(collection, ownerId, '任务顺序在两端修改');
+            preferred = choice === 'remote' ? r.tasks : l.tasks;
+          }
+        }
+        const positions = new Map(preferred.map((task, index) => [task.id, index]));
+        merged.sort((a, b) => (positions.get(a.id) ?? Infinity) - (positions.get(b.id) ?? Infinity));
       } else if (collection === 'projects' && !path && key === 'custom') {
         merged = Object.fromEntries([...new Set([...Object.keys(l.custom), ...Object.keys(r.custom), ...Object.keys(b.custom)])].map(id => [id, scalar(at(b.custom, id), at(l.custom, id), at(r.custom, id), () => conflict(collection, ownerId, `自定义字段在两端修改：${id}`))]).filter(([, value]) => value !== ABSENT));
       } else if (collection === 'notes' && (key === 'tags' || key === 'projectIds')) {
@@ -188,12 +212,19 @@ function runMerge(baseValue, localValue, remoteValue, choice) {
   }
 
   const projectIds = new Set(data.projects.map(project => project.id));
+  for (const project of data.projects) {
+    const moduleIds = new Set((project.modules || []).map(module => module.id));
+    for (const task of project.tasks) if (task.moduleId && !moduleIds.has(task.moduleId)) {
+      conflict('projects', project.id, '任务所属模块在另一端已删除，任务已保留至未分组');
+      task.moduleId = '';
+    }
+  }
   for (const note of data.notes) note.projectIds = note.projectIds.filter(id => projectIds.has(id));
   return { data, conflicts: [...conflictMap.values()], base, local, remote };
 }
 
 function checked(data) {
-  if (data.projects.length > 3000 || data.notes.length > 10000 || data.fields.length > 30) throw new Error('合并后的记录数量超过工作区上限，请先导出备份并整理记录。');
+  if (data.projects.length > 3000 || data.notes.length > 10000 || data.fields.length > 30 || data.folders.length > 300) throw new Error('合并后的记录数量超过工作区上限，请先导出备份并整理记录。');
   return validateData(copy(data));
 }
 
@@ -227,6 +258,10 @@ export function resolveWorkspaceConflicts(base, local, remote, choice) {
   const newIds = Object.fromEntries(COLLECTIONS.map(collection => [collection, idFactory([...data[collection], ...merged.local[collection], ...merged.remote[collection]])]));
   const projectRemap = new Map(), fieldRemap = new Map();
   const duplicates = conflicts.filter(conflict => conflict.local && conflict.remote && !equal(conflict.local, conflict.remote));
+
+  for (const conflict of duplicates.filter(item => item.collection === 'folders')) {
+    data.folders.push({ ...copy(conflict.remote), id: newIds.folders(conflict.id) });
+  }
 
   for (const conflict of duplicates.filter(item => item.collection === 'fields')) {
     const id = newIds.fields(conflict.id);

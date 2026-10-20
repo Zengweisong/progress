@@ -51,7 +51,7 @@ export function createSyncUI(client, { space = 'main' } = {}) {
       }
     }
     const field = (label, value) => `<div class="sync-record-field"><dt>${esc(label)}</dt><dd>${esc(value === '' || value === undefined || value === null ? '未填写' : value)}</dd></div>`;
-    const names = { projects: '项目', notes: '笔记', fields: '自定义属性' };
+    const names = { projects: '项目', notes: '笔记', fields: '自定义属性', folders: '二级分类' };
     const statusNames = { planned: '待开始', active: '进行中', review: '待回顾', done: '已完成' };
     const priorityNames = { high: '高优先级', medium: '中优先级', low: '低优先级' };
     const typeNames = { text: '文本', number: '数字', date: '日期', checkbox: '复选框' };
@@ -70,6 +70,7 @@ export function createSyncUI(client, { space = 'main' } = {}) {
         return `<dl class="sync-record">${field('笔记标题', record.title)}${field('正文', record.body)}${field('标签', (record.tags || []).join('、') || '无标签')}${field('分类', record.inbox ? '收集箱' : record.category)}${field('关联项目', related.join('、') || '未关联项目')}</dl>`;
       }
       if (item.collection === 'fields') return `<dl class="sync-record">${field('属性名称', record.name)}${field('属性类型', typeNames[record.type] || '未设类型')}</dl>`;
+      if (item.collection === 'folders') return `<dl class="sync-record">${field('分类名称', record.name)}${field('所属位置', { projects: '我的项目', knowledge: '知识库', inbox: '收集箱' }[record.section])}</dl>`;
       return `<dl class="sync-record">${field('内容', record.title || record.name || '记录已修改')}</dl>`;
     }
     return `<section class="sync-conflicts"><h3>比较冲突内容 <span>${conflicts.length} 项</span></h3><p class="sync-muted">未冲突的修改会自动合并。选择任一方式前，都会保留恢复备份。</p><div class="sync-conflict-list">${conflicts.map((item, i) => `<details ${i === 0 ? 'open' : ''}><summary><span class="sync-record-kind">${esc(names[item.collection] || '记录')}</span>${esc(item.local?.title || item.remote?.title || item.base?.title || item.local?.name || item.remote?.name || item.base?.name || `冲突 ${i + 1}`)}</summary><div class="sync-conflict-values"><div><strong>本机</strong><div class="sync-record-scroll" tabindex="0" aria-label="本机${esc(names[item.collection] || '记录')}内容">${recordMarkup(item.local, item)}</div></div><div><strong>云端</strong><div class="sync-record-scroll" tabindex="0" aria-label="云端${esc(names[item.collection] || '记录')}内容">${recordMarkup(item.remote, item)}</div></div></div></details>`).join('')}</div><div class="sync-actions vertical"><button type="button" class="sync-primary" data-sync-action="resolve-both">合并并保留冲突副本</button><button type="button" data-sync-action="resolve-local">以本机冲突项为准</button><button type="button" data-sync-action="resolve-remote">以云端冲突项为准</button></div></section>`;

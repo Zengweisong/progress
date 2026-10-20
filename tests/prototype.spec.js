@@ -17,8 +17,8 @@ test('project creation, task progress and saved view survive reload', async ({ p
   await page.getByRole('combobox', { name: '状态', exact: true }).selectOption('active');
   await page.getByRole('button', { name: '创建项目', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '项目详情：跨端验证项目' })).toBeVisible();
-  await page.getByRole('textbox', { name: '新任务标题' }).fill('完成第一个任务');
-  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await page.getByRole('textbox', { name: '在未分组中添加任务' }).fill('完成第一个任务');
+  await page.getByRole('button', { name: '添加到未分组', exact: true }).click();
   await page.getByLabel('完成第一个任务', { exact: true }).check();
   await expect(page.locator('.drawer .progress-meta')).toContainText('100%');
   await page.reload();
@@ -31,6 +31,34 @@ test('project creation, task progress and saved view survive reload', async ({ p
   await expect(row).toContainText('100%');
   await page.reload();
   await expect(page.getByRole('button', { name: '表格', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('project pickers keep the draft when Escape closes the menu', async ({ page }) => {
+  await page.goto('/');
+  test.skip(!await page.evaluate(() => CSS.supports('appearance', 'base-select')), 'Customizable native pickers are unavailable');
+  await page.locator('.page-heading').getByRole('button', { name: '新建项目' }).click();
+  const dialog = page.getByRole('dialog', { name: '新建项目', exact: true });
+  const title = dialog.getByRole('textbox', { name: '项目名称', exact: true });
+  await title.fill('保留这份草稿');
+  const status = dialog.getByRole('combobox', { name: '状态', exact: true });
+  await status.click();
+  await page.getByRole('option', { name: '进行中', exact: true }).click();
+  await expect(status).toHaveValue('active');
+  const priority = dialog.getByRole('combobox', { name: '优先级', exact: true });
+  await priority.click();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await expect(title).toHaveValue('保留这份草稿');
+  await expect(priority).toHaveValue('medium');
+  expect(await priority.evaluate(el => el.matches(':open'))).toBe(false);
+  await priority.focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await expect(priority).toHaveValue('low');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
 });
 
 test('note editing, safe Markdown rendering and bidirectional project links', async ({ page }) => {
@@ -51,6 +79,7 @@ test('note editing, safe Markdown rendering and bidirectional project links', as
   await expect(page.locator('.linked-note', { hasText: '我的知识验证笔记' })).toBeVisible();
   await page.locator('.linked-note', { hasText: '我的知识验证笔记' }).click();
   await page.reload();
+  await page.getByRole('button', { name: '阅读', exact: true }).click();
   await expect(page.locator('.markdown')).toContainText('有价值的经验');
   await expect(page.locator('.project-link-chip')).toContainText('个人知识库 2.0');
 });
@@ -96,7 +125,7 @@ test('capture, organize and search work with keyboard and touch', async ({ page 
   await page.getByRole('textbox', { name: '搜索项目、任务和笔记' }).fill('可执行的改变');
   await expect(page.locator('.search-result')).toHaveCount(1);
   await page.locator('.search-result').click();
-  await expect(page.getByRole('dialog', { name: '笔记详情：地铁上的新想法' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '笔记编辑器：地铁上的新想法' })).toBeVisible();
   await expect(page.getByRole('button', { name: '移入知识库', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page.keyboard.press('Control+k');
@@ -127,7 +156,7 @@ test('export/import preserve relations without replacing existing content', asyn
 test('layout, navigation and prototype sync state have no runtime errors', async ({ page }, testInfo) => {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '我的项目', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '下一站，完成。', exact: true })).toBeVisible();
   await page.screenshot({ path: `docs/screenshots/${testInfo.project.name}-projects.png`, fullPage: true, animations: 'disabled' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('button', { name: '打开项目：个人知识库 2.0', exact: true }).click();
