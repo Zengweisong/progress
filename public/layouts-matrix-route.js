@@ -1,3 +1,5 @@
+import { taskStatus, taskStates } from './project-tasks.js';
+
 const phaseLabels = { planned: '待开始', active: '进行中', review: '待回顾', done: '已完成' };
 const routeColors = ['#2a7769', '#ac6439', '#726a9e', '#557998', '#a8792c', '#8e6581', '#58846b', '#727c88'];
 
@@ -47,7 +49,7 @@ export function renderMatrix(ctx) {
 }
 
 export function renderRoute(ctx) {
-  const { data, state, esc, icon, pct, date, captureForm, recordList } = ctx;
+  const { data, state, esc, icon, pct, date, captureForm, recordList, compact = false } = ctx;
   const projects = data.projects;
   const selected = projects.find(project => project.id === state.selectedProject) || projects[0];
   const selectedIndex = selected ? data.projects.indexOf(selected) : 0;
@@ -55,7 +57,7 @@ export function renderRoute(ctx) {
   const completedTasks = data.projects.flatMap(project => project.tasks).filter(task => task.done).length;
   return `<section class="view-route" aria-label="路线图版面">
     <header class="mr-route-heading"><div><span class="mr-kicker">ROUTE MAP / 让进展看得见</span><h1>下一站，<em>完成。</em></h1><p>每个项目一条线，每个任务一站。勾亮一站，就向前一步。</p></div><div class="mr-route-total"><strong>${completedTasks}</strong><span>个任务已抵达</span><div class="mr-route-mini-track"><i></i><i></i><i></i><i></i></div></div></header>
-    <div class="mr-route-toolbar">${filters(state)}<div class="mr-route-key"><span><i class="is-done"></i>已完成</span><span><i></i>待完成</span><small>按任务顺序排列 · 非时间轴</small></div></div>
+    <div class="mr-route-toolbar">${filters(state)}${compact ? '' : '<div class="mr-route-key"><span><i class="is-done"></i>已完成</span><span><i></i>待完成</span><small>按任务顺序排列 · 非时间轴</small></div>'}</div>
     <div class="mr-route-workspace"><div class="mr-route-lines">
       ${projects.map(project => {
         const index = data.projects.indexOf(project);
@@ -63,13 +65,13 @@ export function renderRoute(ctx) {
         const next = project.tasks.find(task => !task.done);
         return `<article class="mr-route-line ${selected?.id === project.id ? 'is-selected' : ''}" style="--route-color:${color}" aria-label="${esc(project.title)}任务路线">
           <header class="mr-line-heading"><button class="mr-line-select" type="button" data-select-project="${esc(project.id)}" aria-pressed="${selected?.id === project.id}"><span class="mr-line-number">${String(index + 1).padStart(2, '0')}</span><span><strong>${esc(project.title)}</strong><small>${esc(phaseLabels[project.status])} <i>·</i> ${project.tasks.filter(task => task.done).length}/${project.tasks.length} 站完成</small></span></button><span class="mr-line-percent">${pct(project)}<small>%</small></span></header>
-          <div class="mr-stations-scroll" tabindex="0" aria-label="${esc(project.title)}任务，可横向滚动"><div class="mr-stations">${project.tasks.map((task, taskIndex) => `<label class="mr-station ${task.done ? 'is-done' : ''} ${task.id === next?.id ? 'is-next' : ''}"><input type="checkbox" data-task="${esc(task.id)}" data-project-id="${esc(project.id)}" ${task.done ? 'checked' : ''} aria-label="${esc(task.title)}"><span class="mr-station-dot">${task.done ? icon('check') : `<span>${taskIndex + 1}</span>`}</span><span class="mr-station-title">${esc(task.title)}</span><span class="mr-station-hint">${task.done ? '已完成' : task.id === next?.id ? '下一站' : '待完成'}</span></label>`).join('') || '<p class="mr-empty">路线还没有站点，在右侧添加第一项任务。</p>'}</div></div>
+          <div class="mr-stations-scroll" tabindex="0" aria-label="${esc(project.title)}任务，可横向滚动"><div class="mr-stations">${project.tasks.map((task, taskIndex) => `<label ${compact ? `data-route-task="${esc(task.id)}" data-route-project="${esc(project.id)}" title="拖动圆点调整顺序；Alt + 左右方向键也可移动"` : ''} class="mr-station ${taskStatus(task) === 'active' ? 'is-active' : ''} ${task.done ? 'is-done' : ''} ${task.id === next?.id ? 'is-next' : ''}"><input type="checkbox" data-task="${esc(task.id)}" data-project-id="${esc(project.id)}" ${task.done ? 'checked' : ''} aria-label="${esc(task.title)}"><span class="mr-station-dot">${task.done ? icon('check') : `<span>${taskIndex + 1}</span>`}</span><span class="mr-station-title">${esc(task.title)}</span><span class="mr-station-hint">${compact ? taskStates[taskStatus(task)] : task.done ? '已完成' : task.id === next?.id ? '下一站' : '待完成'}</span></label>`).join('') || '<p class="mr-empty">路线还没有站点，在右侧添加第一项任务。</p>'}</div></div>
         </article>`;
       }).join('') || '<div class="mr-empty">没有符合条件的项目。试试其他筛选条件。</div>'}
-      <p class="mr-route-caption">${icon('route')}点击站点完成任务；点击线路名称，切换右侧记录项目。</p>
+      ${compact ? '' : `<p class="mr-route-caption">${icon('route')}点击站点完成任务；点击线路名称，切换右侧记录项目。</p>`}
     </div>
-    <aside class="mr-route-dock" ${selected ? `style="--route-color:${routeColors[selectedIndex % routeColors.length]}"` : ''}>
-      ${selected ? `<div class="mr-dock-label"><span class="mr-dock-dot"></span>当前线路 <span>${String(selectedIndex + 1).padStart(2, '0')}</span></div><button class="mr-dock-title" type="button" data-project="${esc(selected.id)}">${esc(selected.title)}${icon('arrow')}</button><p class="mr-dock-description">${esc(selected.description)}</p><div class="mr-dock-meta"><span>${esc(date(selected.due))}<small>目标日期</small></span><span>${pct(selected)}%<small>任务进度</small></span></div><div class="mr-dock-divider"></div><h2>${icon('plus')}在这条线上，记一笔</h2>${captureForm({ id: 'route-capture', projectId: selected.id, placeholder: '下一步做什么？或记下此刻的想法…', label: '线路记录' })}<div class="mr-dock-notes"><div class="mr-dock-notes-heading"><h2>随行笔记</h2><span>${selectedNotes.length}</span></div>${recordList(selectedNotes, 4)}</div>` : `<h2>先把想法记下来</h2>${captureForm({ id: 'route-capture', placeholder: '记录一条想法…', label: '快速记录' })}`}
+    <aside class="mr-route-dock" ${selected ? 'data-has-project' : ''} ${selected ? `style="--route-color:${routeColors[selectedIndex % routeColors.length]}"` : ''}>
+      ${selected ? `${compact ? '' : `<div class="mr-dock-label"><span class="mr-dock-dot"></span>当前线路 <span>${String(selectedIndex + 1).padStart(2, '0')}</span></div>`}<button class="mr-dock-title" type="button" data-project="${esc(selected.id)}">${esc(selected.title)}${icon('arrow')}</button>${compact ? '' : `<p class="mr-dock-description">${esc(selected.description)}</p>`}<div class="mr-dock-meta"><span aria-label="目标日期：${esc(date(selected.due))}" title="目标日期">${esc(date(selected.due))}${compact ? '' : '<small>目标日期</small>'}</span><span aria-label="任务进度：${pct(selected)}%" title="任务进度">${pct(selected)}%${compact ? '' : '<small>任务进度</small>'}</span></div><div class="mr-dock-divider"></div>${compact ? '' : `<h2>${icon('plus')}在这条线上，记一笔</h2>`}${captureForm({ id: 'route-capture', projectId: selected.id, placeholder: '下一步做什么？或记下此刻的想法…', label: '线路记录' })}<div class="mr-dock-notes"><div class="mr-dock-notes-heading"><h2>${compact ? '关联笔记' : '随行笔记'}</h2><span>${selectedNotes.length}</span></div>${recordList(selectedNotes, 4)}</div>` : `<h2>${compact ? '快速记录' : '先把想法记下来'}</h2>${captureForm({ id: 'route-capture', placeholder: '记录一条想法…', label: '快速记录' })}`}
     </aside></div>
   </section>`;
 }

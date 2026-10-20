@@ -37,6 +37,7 @@ export function seedData() {
       note('n7', '一个关于快速记录的想法', '想到的时候，应该可以先写下来，不必先决定放在哪里。', '产品与设计', ['灵感'], [], '# 一个关于快速记录的想法\n\n如果每次记录都要先选项目、分类和标签，很多想法可能就不会被记下来。\n\n收集箱可以承接这些还没整理的内容。等有空时，再把它们与项目连接起来。', true),
     ],
     fields: [],
+    folders: [],
     preferences: { view: 'board', sort: 'updated', group: 'status' },
   };
 }
@@ -51,7 +52,17 @@ export function validateData(value) {
     if (!p || !str(p.id, 100) || ids.has(p.id) || !str(p.title, 200) || !p.title.trim() || !str(p.description) || !statuses.some(s => s.id === p.status) || !Object.hasOwn(priorities, p.priority) || !str(p.tag, 60) || !str(p.due, 10) || !Array.isArray(p.tasks) || p.tasks.length > 1000 || typeof p.pinned !== 'boolean' || !p.custom || typeof p.custom !== 'object' || Array.isArray(p.custom)) fail();
     if (p.due && !/^\d{4}-\d{2}-\d{2}$/.test(p.due)) fail();
     ids.add(p.id);
-    for (const t of p.tasks) { if (!t || !str(t.id, 100) || !str(t.title, 500) || typeof t.done !== 'boolean') fail(); }
+    if (p.modules !== undefined && (!Array.isArray(p.modules) || p.modules.length > 100)) fail();
+    const moduleIds = new Set();
+    for (const module of p.modules || []) {
+      if (!module || !str(module.id, 100) || !module.id || moduleIds.has(module.id) || !str(module.name, 60) || !module.name.trim()) fail();
+      moduleIds.add(module.id);
+    }
+    for (const t of p.tasks) {
+      if (!t || !str(t.id, 100) || !str(t.title, 500) || typeof t.done !== 'boolean') fail();
+      if (t.status !== undefined && (!['todo', 'active', 'done'].includes(t.status) || t.done !== (t.status === 'done'))) fail();
+      if (t.moduleId !== undefined && (!str(t.moduleId, 100) || (t.moduleId && !moduleIds.has(t.moduleId)))) fail();
+    }
     if (new Set(p.tasks.map(t => t.id)).size !== p.tasks.length) fail();
     if (Object.values(p.custom).some(v => !['string', 'number', 'boolean'].includes(typeof v) && v !== null)) fail();
     if (!str(p.updatedAt, 50) || Number.isNaN(Date.parse(p.updatedAt))) fail();
@@ -65,6 +76,13 @@ export function validateData(value) {
   for (const f of value.fields) {
     if (!f || !str(f.id, 100) || fieldIds.has(f.id) || !str(f.name, 40) || !f.name.trim() || !['text', 'number', 'date', 'checkbox'].includes(f.type)) fail();
     fieldIds.add(f.id);
+  }
+  if (value.folders === undefined) value.folders = [];
+  if (!Array.isArray(value.folders) || value.folders.length > 300) fail();
+  const folderIds = new Set();
+  for (const folder of value.folders) {
+    if (!folder || !str(folder.id, 100) || !folder.id || folderIds.has(folder.id) || !['projects', 'knowledge', 'inbox'].includes(folder.section) || !str(folder.name, 60) || !folder.name.trim() || !str(folder.updatedAt, 50) || Number.isNaN(Date.parse(folder.updatedAt))) fail();
+    folderIds.add(folder.id);
   }
   const prefs = value.preferences;
   value.preferences = { view: prefs?.view === 'table' ? 'table' : 'board', sort: ['updated', 'title', 'due'].includes(prefs?.sort) ? prefs.sort : 'updated', group: prefs?.group === 'priority' ? 'priority' : 'status' };
