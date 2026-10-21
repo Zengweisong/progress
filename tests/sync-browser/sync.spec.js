@@ -236,16 +236,16 @@ test('route tasks and linked notes sync across devices while drafts and layouts 
   const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
   const b = await secondDevice(browser, username);
   try {
-    await b.page.locator('[data-view="table"]').click();
+    await b.page.goto('/?layout=table');
     await page.locator('[data-select-project="p1"]').click();
     await page.locator('[data-task="p1-t3"][data-project-id="p1"]').check();
     await page.locator('#route-capture-body').fill('路线图上的同步笔记');
     await editProject(b.page, '另一台设备更新的项目'); await sync(b.page);
-    await page.locator('[data-view="board"]').click();
+    await page.goto('/#knowledge');
     // Pending remote data must not replace the workspace while this view hides a draft.
     await openSync(page); await dialog(page).getByRole('button', { name: '立即同步', exact: true }).click(); await closeSync(page);
     expect((await stored(page)).projects[0].title).toBe('个人知识库 2.0');
-    await page.locator('[data-view="route"]').click();
+    await page.goto('/#projects');
     await expect(page.locator('#route-capture-body')).toHaveValue('路线图上的同步笔记');
     await page.getByRole('button', { name: '保存记录', exact: true }).click();
     await sync(page); await sync(b.page);
@@ -253,8 +253,8 @@ test('route tasks and linked notes sync across devices while drafts and layouts 
     expect(aData.projects.find(p => p.id === 'p1').title).toBe('另一台设备更新的项目');
     expect(bData.projects.find(p => p.id === 'p1').tasks.find(t => t.id === 'p1-t3').done).toBe(true);
     expect(bData.notes.find(n => n.title === '路线图上的同步笔记').projectIds).toEqual(['p1']);
-    await expect(b.page.locator('[data-view="table"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('[data-view="route"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(b.page.locator('.project-table')).toBeVisible();
+    await expect(page.locator('.workspace-route')).toBeVisible();
     const byId = items => [...items].sort((a, b) => a.id.localeCompare(b.id));
     expect({ ...aData, notes: byId(aData.notes), projects: byId(aData.projects) }).toEqual({ ...bData, notes: byId(bData.notes), projects: byId(bData.projects) });
     await page.evaluate(async () => { await navigator.serviceWorker.ready; });

@@ -39,11 +39,11 @@ test('one live editor presents Markdown and category navigation lists article ti
   expect(errors).toEqual([]);
 });
 
-test('typing, formatting, undo and metadata changes keep Markdown and editor history', async ({ page }) => {
+test('typing, formatting, undo and title changes keep Markdown and editor history', async ({ page }) => {
   await editor(page).fill('重要内容'); await editor(page).press('Control+a');
   await page.getByRole('button', { name: '加粗', exact: true }).click();
   await expect.poll(() => source(page)).toBe('**重要内容**');
-  await page.locator('#note-category').selectOption('技术实践');
+  await expect(page.locator('.note-properties')).toHaveCount(0);
   await editor(page).press('Control+z');
   await expect.poll(() => source(page)).toBe('重要内容');
   await editor(page).press('Control+a'); await editor(page).press('Control+k');

@@ -49,10 +49,10 @@ test('design controls, comparison and phone preview are navigable', async ({ pag
 });
 
 test('preview interactions leave the real workspace untouched and honor accessibility preferences', async ({ page }) => {
-  await page.goto('/');
-  await page.getByRole('button', { name: '看板', exact: true }).click();
+  await page.goto('/?layout=board');
   await expect(page.locator('.project-card')).toHaveCount(8);
-  await page.getByRole('link', { name: 'Apple Design 版面探索' }).click();
+  if (page.viewportSize().width > 700) await page.getByRole('link', { name: 'Apple Design 版面探索' }).click();
+  else await page.goto('/designs.html');
   await page.locator('.d-project-card[data-project=p1]').click();
   await page.getByLabel('完成检索与快速记录流程', { exact: true }).check();
   await expect(page.locator('.d-task-progress')).toContainText('80%');

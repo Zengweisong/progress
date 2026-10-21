@@ -1,6 +1,5 @@
 .note-document { max-width: 1000px; }
-.note-live-paper { margin-top: 22px; border: 0; border-radius: 0; background: transparent; overflow: visible; }
-.note-live-paper > .markdown-tools { position: sticky; top: 0; z-index: 3; padding: 6px 0; background: var(--bg, #fcfcf7); border-bottom-color: var(--line); }
+.note-live-paper { margin-top: 16px; border: 0; border-radius: 0; background: transparent; overflow: visible; }
 .live-note-editor .cm-editor { min-height: 58dvh; background: transparent; color: #384b3f; font-size: 15px; line-height: 1.95; }
 .live-note-editor .cm-editor.cm-focused { outline: none; }
 .live-note-editor .cm-scroller { overflow: visible; font-family: var(--font); line-height: inherit; }
