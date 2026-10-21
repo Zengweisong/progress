@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { seedData } from '../../public/data.js';
 
 const password = 'test-password-12345';
 const name = () => `user-${randomUUID().slice(0, 12)}`;
@@ -43,6 +44,95 @@ async function secondDevice(browser, username) {
   await account(page, username);
   return { context, page };
 }
+
+test('manual project and category order and note moves sync across devices and survive reload', async ({ page, browser }) => {
+  const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
+  const other = await secondDevice(browser, username);
+  try {
+    const original = await stored(page);
+    const projectHandles = page.locator('.home-record-handle'), secondId = await projectHandles.nth(1).getAttribute('data-order-id');
+    await projectHandles.nth(1).focus(); await page.keyboard.press('Alt+ArrowUp');
+    const categories = page.locator('#nav-children-projects [data-record-drag="category"]');
+    await categories.last().focus(); await page.keyboard.press('Alt+ArrowUp');
+    const order = await categories.evaluateAll(nodes => nodes.map(node => node.dataset.orderId));
+    await page.goto('/#knowledge');
+    const expand = page.locator('[data-nav-expand="knowledge"]'); if (await expand.getAttribute('aria-expanded') !== 'true') await expand.click();
+    await page.locator('[data-sidebar-note="n1"]').focus(); await page.keyboard.press('Alt+ArrowRight');
+    const local = await stored(page), note = local.notes.find(n => n.id === 'n1');
+    expect(note.category).not.toBe(original.notes.find(n => n.id === 'n1').category);
+    await sync(page); await sync(other.page);
+    await expect(other.page.locator('[data-home-project]').first()).toHaveAttribute('data-home-project', secondId);
+    expect(await other.page.locator('#nav-children-projects [data-record-drag="category"]').evaluateAll(nodes => nodes.map(node => node.dataset.orderId))).toEqual(order);
+    const remote = await stored(other.page);
+    expect(remote.notes.find(n => n.id === 'n1')).toEqual(note);
+    expect(remote.projects.map(p => [p.id, p.order, p.tasks])).toEqual(local.projects.map(p => [p.id, p.order, p.tasks]));
+    await other.page.reload(); await expect(other.page.locator('[data-home-project]').first()).toHaveAttribute('data-home-project', secondId);
+    expect(remote.notes.map(n => [n.body, n.projectIds])).toEqual(original.notes.map(n => [n.body, n.projectIds]));
+  } finally { await other.context.close(); }
+});
+
+test('project and task archives and restores sync to a second device without deleting records', async ({ page, browser }) => {
+  const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
+  const before = await stored(page), project = before.projects[0], task = project.tasks[0];
+  const other = await secondDevice(browser, username);
+  try {
+    await page.goto('/#projects/project/p1');
+    await page.locator('.project-detail').getByRole('button', { name: `编辑任务：${task.title}`, exact: true }).click();
+    await page.getByRole('button', { name: '归档事项', exact: true }).click();
+    await page.getByRole('button', { name: '归档项目', exact: true }).click();
+    await sync(page); await sync(other.page);
+    const remote = await stored(other.page);
+    expect(remote.projects[0].archived).toBe(true);
+    expect(remote.projects[0].tasks[0].archived).toBe(true);
+    expect(remote.notes).toEqual(before.notes);
+    await expect(other.page.locator('[data-sidebar-project="p1"]')).toHaveCount(0);
+    await other.page.getByRole('button', { name: '已归档项目 1', exact: true }).click();
+    await other.page.getByRole('button', { name: `恢复项目：${project.title}`, exact: true }).click();
+    await other.page.getByRole('button', { name: '关闭弹窗', exact: true }).click();
+    await other.page.goto('/#projects/project/p1');
+    await other.page.getByRole('button', { name: '已归档事项 1', exact: true }).click();
+    await other.page.getByRole('button', { name: `恢复事项：${task.title}`, exact: true }).click();
+    await other.page.getByRole('button', { name: '关闭弹窗', exact: true }).click();
+    await other.page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
+    await sync(other.page); await sync(page);
+    const restored = await stored(page);
+    expect(restored.projects[0].archived).toBe(false);
+    expect(restored.projects[0].tasks[0]).toEqual({ ...task, archived: false });
+    expect(restored.projects).toHaveLength(before.projects.length);
+    expect(restored.notes).toEqual(before.notes);
+  } finally { await other.context.close(); }
+});
+
+test('deleted default categories and modules stay deleted on a second device without losing contents', async ({ page, browser }) => {
+  const data = seedData(); data.notes[0].category = '';
+  data.projects[0].modules = [{ id: 'ui', name: '界面' }];
+  await page.addInitScript(data => { if (!localStorage.getItem('shixu.workspace.v1')) localStorage.setItem('shixu.workspace.v1', JSON.stringify(data)); }, data);
+  const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
+  const other = await secondDevice(browser, username);
+  try {
+    await page.goto('/#knowledge');
+    const expand = page.locator('[data-nav-expand="knowledge"]');
+    if (await expand.getAttribute('aria-expanded') !== 'true') await expand.click();
+    const edit = page.getByRole('button', { name: '编辑未分类分类', exact: true });
+    await edit.locator('..').hover(); await edit.click();
+    await page.getByRole('button', { name: '删除分类', exact: true }).click();
+    await page.getByRole('dialog', { name: '删除这个分类？', exact: true }).getByRole('button', { name: '删除分类', exact: true }).click();
+    await page.goto('/#projects/project/p1');
+    await page.locator('.project-detail').getByRole('button', { name: '重命名模块：默认模块', exact: true }).click();
+    await page.getByRole('button', { name: '删除模块，事项移至首个模块', exact: true }).click();
+    await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
+    await sync(page); await sync(other.page);
+    const remote = await stored(other.page);
+    expect(remote.notes).toEqual(data.notes);
+    expect(remote.folders).toContainEqual(expect.objectContaining({ section: 'knowledge', uncategorizedHidden: true }));
+    expect(remote.projects[0].tasks).toEqual(data.projects[0].tasks.map(task => ({ ...task, moduleId: 'ui' })));
+    await other.page.goto('/#knowledge'); await other.page.reload();
+    await expect(other.page.locator('#nav-children-knowledge [data-note-fold=""]')).toHaveCount(0);
+    await expect(other.page.locator('#nav-children-knowledge [data-sidebar-note="n1"]')).toHaveCount(1);
+    await other.page.goto('/#projects/project/p1');
+    await expect(other.page.locator('.project-detail [data-task-zone]')).toHaveCount(1);
+  } finally { await other.context.close(); }
+});
 
 test('note image attachments sync to a second device and render without local files', async ({ page, browser }) => {
   const username = name(); await page.goto('/'); await account(page, username, true, 'merge');

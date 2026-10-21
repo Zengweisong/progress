@@ -215,7 +215,7 @@ function runMerge(baseValue, localValue, remoteValue, choice) {
   for (const project of data.projects) {
     const moduleIds = new Set((project.modules || []).map(module => module.id));
     for (const task of project.tasks) if (task.moduleId && !moduleIds.has(task.moduleId)) {
-      conflict('projects', project.id, '任务所属模块在另一端已删除，任务已保留至未分组');
+      conflict('projects', project.id, '任务所属模块在另一端已删除，任务已保留');
       task.moduleId = '';
     }
   }

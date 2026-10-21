@@ -29,7 +29,7 @@ test('dots reorder right and left without changing completion, module membership
   const projectOrder = await page.locator('[data-select-project]').evaluateAll(nodes => nodes.map(node => node.dataset.selectProject));
   await drag(page, 'p1-t0', 'p1-t1');
   expect((await order(page)).slice(0, 2)).toEqual(['p1-t1', 'p1-t0']);
-  await expect(page.locator('[data-select-project="p1"]').locator('..').locator('.mr-line-percent')).toHaveText('60%');
+  await expect(page.locator('[data-select-project="p1"] small')).toContainText('3/5 站完成');
   let saved = await read(page);
   expect([...saved.projects[0].tasks].sort((a, b) => a.id.localeCompare(b.id))).toEqual(initial.projects[0].tasks);
   expect(saved.projects[1]).toEqual(initial.projects[1]);

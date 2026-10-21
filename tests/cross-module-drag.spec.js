@@ -17,7 +17,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function drag(page, input, target, cancel = false) {
-  await target.scrollIntoViewIfNeeded(); await input.scrollIntoViewIfNeeded();
+  // Center the drop target above the fixed mobile navigation before measuring it.
+  await target.evaluate(node => node.scrollIntoView({ block: 'center', inline: 'nearest' })); await input.scrollIntoViewIfNeeded();
   const start = await input.boundingBox(), end = await target.boundingBox();
   await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2); await page.mouse.down();
   await page.mouse.move(end.x + Math.min(end.width / 2, 45), end.y + Math.min(end.height / 2, 35), { steps: 20 });
@@ -109,7 +110,7 @@ for (const detail of [false, true]) test(`touch moves a ${detail ? 'detail handl
   test.skip(!isMobile, 'Mobile touch surface');
   if (detail) await page.locator('.mr-dock-title').click();
   const input = dragInput(page, 'p1-t0', detail), target = zone(page, 'ui').locator(detail ? '.module-heading' : '.mr-stations');
-  await target.scrollIntoViewIfNeeded(); await input.scrollIntoViewIfNeeded();
+  await target.evaluate(node => node.scrollIntoView({ block: 'center', inline: 'nearest' })); await input.scrollIntoViewIfNeeded();
   const start = await input.boundingBox(), end = await target.boundingBox(), cdp = await page.context().newCDPSession(page);
   const x = start.x + start.width / 2, y = start.y + start.height / 2, endX = end.x + 45, endY = end.y + 20;
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
