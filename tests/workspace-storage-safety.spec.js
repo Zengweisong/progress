@@ -90,7 +90,7 @@ test('actual app preserves a local edit made while incoming sync images are bein
   await page.getByRole('button', { name: '立即同步', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.imagePersistenceEntered)).toBe(true);
   await page.getByRole('button', { name: '关闭账号与多端同步', exact: true }).click();
-  await page.locator('[data-sidebar-project="p1"]').click();
+  await page.goto(`${origin}/#projects/project/p1`);
   await page.getByRole('textbox', { name: '项目标题', exact: true }).fill('图片等待期间的本机编辑');
   await expect.poll(async () => (await stored(page)).projects[0].title).toBe('图片等待期间的本机编辑');
   await page.evaluate(() => window.releaseImagePersistence());
