@@ -54,12 +54,13 @@ test('category names toggle their projects and remember the collapsed state', as
   test.skip(info.project.name === 'mobile', 'Desktop sidebar navigation');
   const original = await prepare(page, true);
   const category = page.locator('[data-category-fold="工作"]'), project = page.locator('[data-sidebar-project="p2"]');
-  const createCategory = page.locator('.nav-group-heading').getByRole('button', { name: '新建项目分类', exact: true });
+  const createCategory = page.locator('.nav-section-create[data-create-menu="projects"]');
   await expect(createCategory).toBeVisible();
   await expect(page.locator('.nav-project-actions')).toHaveCount(0);
-  const createProject = page.locator('[data-action="new-category-page"][data-section="projects"][data-name="工作"]');
+  const createProject = page.locator('.nav-category-create[data-create-menu="projects"][data-create-category="工作"]');
   expect(await createProject.evaluate(button => getComputedStyle(button).opacity)).toBe('1');
   await createProject.click();
+  await page.getByRole('menuitem', { name: '新建页面', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '新建项目', exact: true }).getByLabel('分类（可选）', { exact: true })).toHaveValue('工作');
   await page.getByRole('button', { name: '取消', exact: true }).click();
   await expect(category).toHaveAttribute('aria-expanded', 'true');
@@ -74,6 +75,7 @@ test('category names toggle their projects and remember the collapsed state', as
   await page.locator('.sidebar .nav-item[href="#projects"]').click();
   await expect(page.locator('#nav-children-projects')).toBeHidden();
   await createCategory.click();
+  await page.getByRole('menuitem', { name: '新建分类', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '新建二级分类', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '取消', exact: true }).click();
   await expect(page.locator('#nav-children-projects')).toBeHidden();

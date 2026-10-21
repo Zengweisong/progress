@@ -15,7 +15,7 @@ test('completed projects archive across all views and restore without losing tas
   await expect(page.locator('[data-sidebar-project="p1"]')).toHaveCount(0);
   await expect(page.locator('.pinned-link[href="#projects/project/p1"]')).toHaveCount(0);
   for (const [view, selector] of [['board', '.project-card'], ['table', '.project-table tbody tr'], ['route', '.mr-route-line']]) {
-    await page.locator(`[data-view="${view}"]`).click(); await expect(page.locator(selector)).toHaveCount(1);
+    await page.goto(`/?layout=${view}${new URL(page.url()).hash}`); await expect(page.locator(selector)).toHaveCount(1);
   }
   await page.reload();
   await page.getByRole('button', { name: '已归档项目 1', exact: true }).click();

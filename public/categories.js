@@ -1,8 +1,9 @@
-export const sectionNames = { projects: '我的项目', knowledge: '知识库', inbox: '收集箱' };
+export const sectionNames = { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹' };
 export const categoryField = section => section === 'projects' ? 'tag' : 'category';
+export const isNoteFavorite = note => note.favorite ?? note.inbox;
 
 export function categoryRecords(data, section) {
-  return section === 'projects' ? data.projects : data.notes.filter(note => note.inbox === (section === 'inbox'));
+  return section === 'projects' ? data.projects : section === 'inbox' ? data.notes.filter(isNoteFavorite) : data.notes;
 }
 
 export function categoryNames(data, section) {

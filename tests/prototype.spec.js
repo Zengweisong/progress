@@ -25,12 +25,12 @@ test('project creation, task progress and saved view survive reload', async ({ p
   await expect(page.getByLabel('完成第一个任务', { exact: true })).toBeChecked();
   await page.getByRole('combobox', { name: '项目状态', exact: true }).selectOption('done');
   await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
-  await page.getByRole('button', { name: '表格', exact: true }).click();
+  await page.goto('/?layout=table');
   const row = page.getByRole('row', { name: '打开项目：跨端验证项目', exact: true });
   await expect(row).toContainText('已完成');
   await expect(row).toContainText('100%');
   await page.reload();
-  await expect(page.getByRole('button', { name: '表格', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.project-table')).toBeVisible();
 });
 
 test('project pickers keep the draft when Escape closes the menu', async ({ page }) => {
@@ -62,23 +62,21 @@ test('project pickers keep the draft when Escape closes the menu', async ({ page
 });
 
 test('note editing, safe Markdown rendering and bidirectional project links', async ({ page }) => {
-  await page.goto('/#knowledge');
-  await page.locator('.page-heading').getByRole('button', { name: '新建笔记' }).click();
-  await page.getByRole('textbox', { name: '标题', exact: true }).fill('我的知识验证笔记');
-  await page.getByRole('textbox', { name: '内容', exact: true }).fill('# 实践笔记\n\n记录一个可复用的方法。');
+  await page.goto('/#projects/project/p1');
+  await page.getByRole('button', { name: '为此项目新建笔记', exact: true }).click();
+  await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('我的知识验证笔记');
+  await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('# 实践笔记\n\n记录一个可复用的方法。');
   await page.getByRole('button', { name: '创建笔记', exact: true }).click();
   await page.getByRole('textbox', { name: '笔记正文' }).fill('# 实践笔记\n\n- 有价值的经验\n\n<img src=x onerror=alert(1)>');
   await expect(page.locator('.live-note-editor')).toContainText('有价值的经验');
   await expect(page.locator('.live-note-editor img:not(.cm-widgetBuffer)')).toHaveCount(0);
-  await page.getByRole('button', { name: '关联', exact: true }).click();
-  await page.getByLabel('个人知识库 2.0', { exact: true }).check();
-  await page.getByRole('button', { name: '保存关联', exact: true }).click();
-  await page.getByRole('button', { name: '个人知识库 2.0', exact: true }).click();
+  await expect(page.locator('.note-properties, .project-link-chip')).toHaveCount(0);
+  await page.goto('/#projects/project/p1');
   await expect(page.locator('.linked-note', { hasText: '我的知识验证笔记' })).toBeVisible();
   await page.locator('.linked-note', { hasText: '我的知识验证笔记' }).click();
   await page.reload();
   await expect(page.locator('.live-note-editor')).toContainText('有价值的经验');
-  await expect(page.locator('.project-link-chip')).toContainText('个人知识库 2.0');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('shixu.workspace.v1')).notes.find(note => note.title === '我的知识验证笔记').projectIds)).toEqual(['p1']);
 });
 
 test('filters, custom properties and card grouping update the same records', async ({ page }, testInfo) => {
@@ -94,7 +92,7 @@ test('filters, custom properties and card grouping update the same records', asy
     await page.locator('[data-project="p3"].project-card').dragTo(page.locator('[data-drop="active"] .column-header'));
     await expect(page.locator('[data-drop="active"] [data-project="p3"]')).toBeVisible();
   }
-  await page.getByRole('button', { name: '表格', exact: true }).click();
+  await page.goto('/?layout=table');
   await page.getByRole('button', { name: '添加属性', exact: true }).click();
   await page.getByRole('textbox', { name: '属性名称', exact: true }).fill('预算');
   await page.getByRole('combobox', { name: '字段类型', exact: true }).selectOption('number');
@@ -103,27 +101,26 @@ test('filters, custom properties and card grouping update the same records', asy
   await page.getByRole('spinbutton', { name: '预算', exact: true }).fill('88.5');
   await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
   await expect(page.getByRole('row', { name: '打开项目：个人知识库 2.0', exact: true })).toContainText('88.5');
-  await page.getByRole('button', { name: '看板', exact: true }).click();
+  await page.goto('/?layout=board');
   await page.getByRole('button', { name: '视图设置', exact: true }).click();
   await page.getByRole('combobox', { name: '看板分组', exact: true }).selectOption('priority');
   await page.getByRole('button', { name: '保存设置', exact: true }).click();
   await expect(page.locator('.column')).toHaveCount(3);
 });
 
-test('capture, organize and search work with keyboard and touch', async ({ page }) => {
+test('capture, favorite and search work with keyboard and touch', async ({ page }) => {
   await page.goto('/#inbox');
-  await page.locator('.page-heading').getByRole('button', { name: '快速记录', exact: true }).click();
-  await page.getByRole('textbox', { name: '标题', exact: true }).fill('地铁上的新想法');
-  await page.getByRole('textbox', { name: '内容', exact: true }).fill('为每次项目复盘留下一个可执行的改变。');
-  await page.getByRole('button', { name: '保存到收集箱', exact: true }).click();
-  await page.getByRole('button', { name: '移入知识库', exact: true }).click();
+  await page.locator('.page-heading').getByRole('button', { name: '新建笔记', exact: true }).click();
+  await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('地铁上的新想法');
+  await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('为每次项目复盘留下一个可执行的改变。');
+  await page.getByRole('button', { name: '创建笔记', exact: true }).click();
   await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
   await page.getByRole('button', { name: '搜索', exact: true }).click();
   await page.getByRole('textbox', { name: '搜索项目、任务和笔记' }).fill('可执行的改变');
   await expect(page.locator('.search-result')).toHaveCount(1);
   await page.locator('.search-result').click();
   await expect(page.getByRole('region', { name: '笔记编辑器：地铁上的新想法' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '移入知识库', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '取消收藏', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '搜索', exact: true }).focus();
   await page.keyboard.press('Control+k');

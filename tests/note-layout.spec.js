@@ -1,0 +1,64 @@
+import { test, expect } from '@playwright/test';
+
+const key = 'shixu.note.layout.v1';
+const read = page => page.evaluate(() => JSON.parse(localStorage.getItem('shixu.workspace.v1')));
+const editor = page => page.getByRole('textbox', { name: '笔记正文', exact: true });
+
+test('full width preserves the editor and content, persists and applies to the shared creation template', async ({ page }, info) => {
+  await page.goto('/#knowledge/note/n1');
+  const original = await read(page);
+  const standard = await page.locator('.note-document').boundingBox();
+  await editor(page).evaluate(el => el.setAttribute('data-layout-check', 'same-editor'));
+  await page.getByRole('button', { name: '切换为全宽', exact: true }).click();
+  await expect(page.locator('.note-workspace')).toHaveClass(/is-full-width/);
+  await expect(editor(page)).toHaveAttribute('data-layout-check', 'same-editor');
+  const full = await page.locator('.note-document').boundingBox();
+  if (page.viewportSize().width > 1234) expect(full.width).toBeGreaterThan(standard.width + 100);
+  else expect(full.width).toBeGreaterThanOrEqual(standard.width);
+  expect(await read(page)).toEqual(original);
+  await page.reload();
+  await expect(page.getByRole('button', { name: '切换为标准宽度', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.screenshot({ path: `.tools/note-layout-${info.project.name}-full.png`, fullPage: true, animations: 'disabled' });
+  await page.goto('/#knowledge');
+  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  await expect(page.locator('.note-workspace')).toHaveClass(/is-full-width/);
+  await expect(page.locator('#note-form, .note-properties, .capture-markdown')).toHaveCount(0);
+  await expect(page.locator('.note-page-toolbar > .markdown-tools')).toBeVisible();
+  await expect(page.locator('.note-page-toolbar [data-action="export-note"]')).toBeVisible();
+  await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('使用详情模板创建');
+  await editor(page).fill('保持编辑历史'); await editor(page).press('Control+a');
+  await page.getByRole('button', { name: '加粗', exact: true }).click();
+  await page.getByRole('button', { name: '切换为标准宽度', exact: true }).click();
+  await expect(page.locator('.note-workspace')).not.toHaveClass(/is-full-width/);
+  await editor(page).press('Control+z');
+  await expect(editor(page)).toHaveText('保持编辑历史');
+  expect(await read(page)).toEqual(original);
+  await page.getByRole('button', { name: '切换为全宽', exact: true }).click();
+  await page.screenshot({ path: `.tools/note-layout-${info.project.name}-create.png`, fullPage: true, animations: 'disabled' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.getByRole('button', { name: '创建笔记', exact: true }).click();
+  await expect(page).toHaveURL(/#knowledge\/note\//);
+  const saved = (await read(page)).notes[0];
+  expect(saved).toMatchObject({ title: '使用详情模板创建', body: '保持编辑历史', inbox: false });
+  await expect(page.locator('.note-workspace')).toHaveClass(/is-full-width/);
+  expect(await page.evaluate(key => localStorage.getItem(key), key)).toBe('full');
+});
+
+test('drafts retain live content through overlays and can export without creating a record', async ({ page }) => {
+  await page.goto('/#knowledge/new-note');
+  const original = await read(page);
+  await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('仍是草稿');
+  await editor(page).fill('草稿里的 **Markdown**');
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  await page.getByRole('button', { name: '关闭搜索', exact: true }).click();
+  await expect(page.locator('#note-title')).toHaveValue('仍是草稿');
+  await expect(editor(page)).toContainText('Markdown');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出 .md', exact: true }).click();
+  expect((await download).suggestedFilename()).toBe('仍是草稿.md');
+  expect(await read(page)).toEqual(original);
+  await page.getByRole('button', { name: '取消新建笔记', exact: true }).click();
+  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  await expect(page.locator('#note-title')).toHaveValue('');
+  await expect(editor(page).locator('.cm-placeholder')).toBeVisible();
+});

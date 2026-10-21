@@ -28,11 +28,11 @@ test('category names reject duplicates, blank input and reserved labels before m
   assert.throws(() => writeCategory(data, 'unknown', null, '测试', 'new', timestamp));
 });
 
-test('renaming and deleting change only the selected section and preserve contents and links', () => {
+test('renaming and deleting categories preserve shared note contents and links', () => {
   const data = seedData(), before = structuredClone(data);
   const folder = writeCategory(data, 'knowledge', '产品与设计', '设计资料', 'folder1', timestamp);
   assert.equal(folder.name, '设计资料');
-  assert.equal(data.notes.find(note => note.inbox).category, '产品与设计');
+  assert.equal(data.notes.find(note => note.inbox).category, '设计资料');
   assert.equal(data.notes.find(note => note.id === 'n1').category, '设计资料');
   removeCategory(data, 'knowledge', '设计资料', timestamp);
   assert.ok(!categoryNames(data, 'knowledge').includes('设计资料'));

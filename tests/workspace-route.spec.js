@@ -2,7 +2,6 @@ import { test, expect } from '@playwright/test';
 import { seedData } from '../public/data.js';
 
 const mainKey = 'shixu.workspace.v1', labKey = 'shixu-layout-lab-v1', viewKey = 'shixu.workspace.layout.v1';
-const view = (page, value) => page.locator(`button[data-view="${value}"]`);
 const projectLine = (page, id) => page.locator('.mr-route-line').filter({ has: page.locator(`[data-select-project="${id}"]`) });
 const readData = page => page.evaluate(key => JSON.parse(localStorage.getItem(key)), mainKey);
 
@@ -13,17 +12,21 @@ async function prepare(page, data = seedData()) {
   }, { data, mainKey, labKey });
 }
 
-test('default route reads existing workspace; layout choices survive reload without changing data', async ({ page }) => {
+test('project header omits view switching and statistics while preserving workspace data', async ({ page }) => {
   const data = seedData(); data.projects[0].title = '我原来的项目'; data.preferences.view = 'table';
   await prepare(page, data); await page.goto('/');
-  await expect(view(page, 'route')).toHaveAttribute('aria-pressed', 'true');
-  await expect(projectLine(page, 'p1')).toContainText('我原来的项目');
-  for (const value of ['board', 'table', 'route']) {
-    await view(page, value).click(); await page.reload();
-    await expect(view(page, value)).toHaveAttribute('aria-pressed', 'true');
+  for (let reload = 0; reload < 2; reload++) {
+    await expect(projectLine(page, 'p1')).toContainText('我原来的项目');
+    await expect(page.locator('.workspace-projects [data-view]')).toHaveCount(0);
+    await expect(page.locator('.workspace-projects .stats-strip')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '筛选项目', exact: true })).toBeVisible();
+    await expect(page.locator('#sort-select')).toBeVisible();
+    await expect(page.getByRole('button', { name: '新建项目', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '归档已完成项目', exact: true })).toBeVisible();
     expect(await readData(page)).toEqual(data);
     expect(await page.evaluate(key => localStorage.getItem(key), labKey)).toBe('independent laboratory data');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.reload();
   }
 });
 
@@ -68,11 +71,10 @@ test('sparse route dots remain visible and views share the same shell', async ({
     accent: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor,
     background: getComputedStyle(document.querySelector('.page')).backgroundColor,
     toolbarY: document.querySelector('.toolbar').getBoundingClientRect().y,
-    statsY: document.querySelector('.stats-strip').getBoundingClientRect().y,
   }));
   const initialShell = await shell();
   for (const value of ['board', 'table', 'route']) {
-    await view(page, value).click();
+    await page.goto(`/?layout=${value}`);
     expect(await shell()).toEqual(initialShell);
     expect(await readData(page)).toEqual(data);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
@@ -84,7 +86,9 @@ test('route completes tasks, adds multiple tasks and saves linked notes in main 
   await page.locator('[data-select-project="p2"]').click();
   const line = projectLine(page, 'p2');
   await line.getByRole('checkbox', { name: '设计文章阅读页', exact: true }).check();
-  await expect(line.locator('.mr-line-select small')).toContainText('3/5 站完成');
+  await expect(line.getByRole('checkbox', { checked: true })).toHaveCount(3);
+  await expect(line.locator('.mr-line-select small')).toHaveCount(0);
+  await expect(page.locator('.mr-dock-meta')).toHaveCount(0);
   await page.locator('[data-route-kind="task"]').click();
   await page.locator('#route-capture-body').fill('新增任务一\n新增任务二');
   await page.getByRole('button', { name: '保存记录', exact: true }).click();
@@ -135,14 +139,14 @@ test('clicking a selected route opens centered project details and preserves dra
   await expect(page.locator('[data-select-project="p2"]')).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('drafts stay with their projects through selection, filters, views and details', async ({ page }) => {
+test('drafts stay with their projects through selection, filters, navigation and details', async ({ page }) => {
   await prepare(page); await page.goto('/');
   await page.locator('[data-select-project="p1"]').click();
   await page.locator('#route-capture-body').fill('项目一的未完成草稿');
   await page.locator('[data-select-project="p2"]').click();
   await expect(page.locator('#route-capture-body')).toHaveValue('');
   await page.locator('#route-capture-body').fill('项目二的未完成草稿');
-  await view(page, 'table').click(); await view(page, 'route').click();
+  await page.goto('/#knowledge'); await page.goto('/#projects');
   await expect(page.locator('#route-capture-body')).toHaveValue('项目二的未完成草稿');
   await page.locator('.mr-dock-title').click();
   await expect(page.getByRole('dialog', { name: '项目详情：独立博客改版' })).toBeVisible();
@@ -157,13 +161,13 @@ test('drafts stay with their projects through selection, filters, views and deta
   expect((await readData(page)).notes).toHaveLength(seedData().notes.length);
 });
 
-test('empty workspace captures inbox notes and supports project creation', async ({ page }) => {
+test('empty workspace captures knowledge notes and supports project creation', async ({ page }) => {
   const data = seedData(); data.projects = []; data.notes = [];
   await prepare(page, data); await page.goto('/');
   await expect(page.locator('[data-route-kind="task"]')).toBeDisabled();
   await page.locator('#route-capture-body').fill('暂时没有项目的想法');
   await page.getByRole('button', { name: '保存记录', exact: true }).click();
-  expect((await readData(page)).notes[0]).toMatchObject({ inbox: true, projectIds: [], title: '暂时没有项目的想法' });
+  expect((await readData(page)).notes[0]).toMatchObject({ inbox: false, projectIds: [], title: '暂时没有项目的想法' });
   await page.getByRole('button', { name: '新建项目', exact: true }).click();
   await page.getByRole('textbox', { name: '项目名称', exact: true }).fill('第一个路线项目');
   await page.getByRole('button', { name: '创建项目', exact: true }).click();
@@ -173,13 +177,13 @@ test('empty workspace captures inbox notes and supports project creation', async
 
 test('lab apply link opens real workspace in route layout and preserves both stores', async ({ page }) => {
   await prepare(page); await page.goto('/?layout=table');
-  await expect(view(page, 'table')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.project-table')).toBeVisible();
   await page.evaluate(key => localStorage.removeItem(key), labKey);
   await page.goto('/layouts.html?layout=route');
   const labData = await page.evaluate(key => localStorage.getItem(key), labKey);
   const mainData = await readData(page);
   await page.getByRole('link', { name: '应用到我的工作区' }).click();
-  await expect(view(page, 'route')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.workspace-route')).toBeVisible();
   await expect(page).toHaveURL(/\/#projects$/);
   expect(await readData(page)).toEqual(mainData);
   expect(await page.evaluate(key => localStorage.getItem(key), labKey)).toEqual(labData);
@@ -213,7 +217,7 @@ test('failed storage keeps the draft and does not duplicate newly captured tasks
   await page.getByRole('button', { name: '保存记录', exact: true }).click();
   await expect(page.locator('#route-capture-body')).toHaveValue('存储不足时保留的任务');
   await page.getByRole('button', { name: '保存记录', exact: true }).click();
-  await view(page, 'table').click(); await view(page, 'route').click();
+  await page.goto('/#knowledge'); await page.goto('/#projects');
   await expect(projectLine(page, 'p1').getByRole('checkbox', { name: '存储不足时保留的任务', exact: true })).toHaveCount(0);
   await expect(page.locator('#route-capture-body')).toHaveValue('存储不足时保留的任务');
   expect((await readData(page)).projects.find(p => p.id === 'p1').tasks).toHaveLength(5);

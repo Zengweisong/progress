@@ -47,7 +47,7 @@ test('home project handles reorder filtered and complete lists, retain drafts an
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const ids = await homeIds(page); await page.reload(); expect(await homeIds(page)).toEqual(ids);
   const saved = await read(page); validateData(saved); expect(saved.projects.map(p => p.tasks)).toEqual(before.projects.map(p => p.tasks));
-  for (const view of ['table', 'board', 'route']) { await page.locator(`[data-view="${view}"]`).click(); await expect(page.locator('#sort-select')).toHaveValue('manual'); }
+  for (const view of ['table', 'board', 'route']) { await page.goto(`/?layout=${view}${new URL(page.url()).hash}`); await expect(page.locator('#sort-select')).toHaveValue('manual'); }
   expect(await homeIds(page)).toEqual(ids);
 });
 test('knowledge categories and article titles can reorder and move without modifying note contents', async ({ page, isMobile }) => {
@@ -76,7 +76,7 @@ test('Escape, invalid targets and failed saves preserve order, categories and in
   const input = page.locator('[data-home-project="p1"] [data-task-add] input'); await input.fill('保留事项草稿');
   await drag(page, home(page).nth(1).locator('.home-record-handle'), home(page).first(), false, true);
   expect(await read(page)).toEqual(before); expect(await homeIds(page)).toEqual(ids);
-  await drag(page, home(page).nth(1).locator('.home-record-handle'), page.locator('.stats-strip'));
+  await drag(page, home(page).nth(1).locator('.home-record-handle'), page.locator('.workspace-projects > .toolbar'));
   expect(await read(page)).toEqual(before);
   await page.evaluate(key => { const original = Storage.prototype.setItem; Storage.prototype.setItem = function(name, value) { if (name === key) throw new DOMException('No room', 'QuotaExceededError'); return original.call(this, name, value); }; }, key);
   await drag(page, home(page).nth(1).locator('.home-record-handle'), home(page).first());

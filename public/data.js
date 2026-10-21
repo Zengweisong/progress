@@ -77,6 +77,7 @@ export function validateData(value) {
   for (const n of value.notes) {
     if (!n || !str(n.id, 100) || noteIds.has(n.id) || !str(n.title, 200) || !n.title.trim() || !str(n.body, 200000) || !str(n.summary) || !str(n.category, 100) || !Array.isArray(n.tags) || !n.tags.every(t => str(t, 60)) || !Array.isArray(n.projectIds) || !n.projectIds.every(id => ids.has(id)) || typeof n.inbox !== 'boolean' || !str(n.updatedAt, 50) || Number.isNaN(Date.parse(n.updatedAt))) fail();
     noteIds.add(n.id);
+    if (n.favorite !== undefined && typeof n.favorite !== 'boolean') fail();
     if (!validOrder(n)) fail();
     if (n.attachments !== undefined) {
       if (!Array.isArray(n.attachments) || n.attachments.length > 50) fail();

@@ -100,7 +100,8 @@ test('detail and quick capture share modules and keep task input drafts', async 
   await detail.getByRole('combobox', { name: '单元测试的任务状态', exact: true }).selectOption('done');
   await expect(detail.getByRole('region', { name: '测试模块' }).locator('.module-heading')).toContainText('1/2');
   await detail.getByRole('button', { name: '关闭项目详情', exact: true }).click();
-  await expect(page.locator('.mr-line-select small')).toContainText('1/5 站完成');
+  await expect(page.locator('.mr-route-line').getByRole('checkbox', { checked: true })).toHaveCount(1);
+  await expect(page.locator('.mr-line-select small')).toHaveCount(0);
   await page.locator('.mr-dock-title').click();
   await expect(input).toHaveValue('还没提交的任务');
   await page.reload();
