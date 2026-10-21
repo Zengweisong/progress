@@ -3,8 +3,9 @@ import { randomBytes, randomUUID, createHash, scrypt, timingSafeEqual } from 'no
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { validateData } from '../public/data.js';
+import { WORKSPACE_BYTES } from '../public/workspace-storage.js';
 
-const WORKSPACE_LIMIT = 5 * 1024 * 1024;
+const WORKSPACE_LIMIT = WORKSPACE_BYTES;
 const AUTH_LIMIT = 2048;
 const SCRYPT_OPTIONS = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const digest = value => createHash('sha256').update(value).digest();

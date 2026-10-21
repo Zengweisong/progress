@@ -1,4 +1,6 @@
 import { EditorView, EditorState, StateField, StateEffect, EditorSelection, Transaction, Decoration, WidgetType, keymap, placeholder, drawSelection, history, historyKeymap, defaultKeymap, indentWithTab, markdown, markdownKeymap, GFM, syntaxTree, syntaxHighlighting, defaultHighlightStyle, bracketMatching } from './vendor/editor/codemirror.js';
+import { persistAttachments } from './workspace-storage.js';
+import { textMatches } from './workspace-search.js';
 import { renderMarkdown } from './markdown.js';
 import { imageSource, readNoteImage, MAX_NOTE_IMAGE_DATA } from './note-images.js';
 
@@ -47,7 +49,7 @@ function liveDecorations(state, focused, attachments) {
     if (name === 'Image') {
       const line = state.doc.lineAt(node.from), match = /^!\[([^\]]*)\]\(([^\s)]+)(?:\s+"[^"]*")?\)$/.exec(source);
       const src = match && imageSource(match[2], attachments);
-      if (src && line.text.trim() === source) {
+      if (src && line.text.trim() === source && !editing(node.from, node.to)) {
         const decoration = Decoration.replace({ widget: new ImagePreview(src, match[1], line.from, line.to), block: true }).range(line.from, line.to);
         marks.push(decoration); atomic.push(decoration); return false;
       }
@@ -115,6 +117,7 @@ export function createLiveNoteEditor({ onChange, getNote, notify }) {
     try {
       const assets = [];
       for (const file of files) assets.push(await readNoteImage(file));
+      await persistAttachments({ notes: [{ attachments: assets }] });
       if (token !== alive || !view || targetId !== noteId) return;
       const note = getNote(targetId), current = note.attachments || [];
       if (current.length + assets.length > 50 || [...current, ...assets].reduce((total, asset) => total + asset.data.length, 0) > MAX_NOTE_IMAGE_DATA) throw new Error('这篇笔记的图片已达容量上限，请压缩图片后再插入。');
@@ -163,5 +166,11 @@ export function createLiveNoteEditor({ onChange, getNote, notify }) {
     ] }) });
   }
   function destroy() { alive++; view?.destroy(); view = null; noteId = null; }
-  return { mount, destroy, format, images, isBusy: () => importing };
+  function focusMatch(query) {
+    if (!view || !query) return;
+    const match = textMatches(view.state.doc.toString(), query).next().value;
+    if (match) view.dispatch({ selection: { anchor: match.from, head: match.to }, scrollIntoView: true });
+    view.focus();
+  }
+  return { mount, destroy, format, images, focusMatch, isBusy: () => importing };
 }

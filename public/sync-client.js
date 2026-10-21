@@ -1,6 +1,7 @@
 import { validateData } from './data.js';
 import { emptyWorkspace, equalData, mergeWorkspaces, resolveWorkspaceConflicts } from './sync-merge.js';
 import { getSyncMeta, putSyncMeta, getRecovery, archiveWorkspace } from './sync-db.js';
+import { hydrateWorkspace } from './workspace-storage.js';
 
 const SPACE_KEYS = { main: 'shixu.workspace.v1', lab: 'shixu-layout-lab-v1' };
 const clone = value => structuredClone(value);
@@ -14,8 +15,8 @@ export function createSyncClient({ space, storageKey, getData, applyData, canSyn
   const snapshot = () => validateData(clone(getData()));
   const pending = () => Boolean(meta.ownerId && (!meta.baseData || !equalData(snapshot(), meta.baseData)));
   const getStatus = () => clone(status);
-  function emit(state, error = '') {
-    status = { ...status, state, user, ownerId: meta.ownerId, lastSyncedAt: meta.lastSyncedAt, pending: pending(), conflicts: clone(meta.conflict?.conflicts || []), error };
+  function emit(state, error = '', pendingOverride) {
+    status = { ...status, state, user, ownerId: meta.ownerId, lastSyncedAt: meta.lastSyncedAt, pending: pendingOverride ?? pending(), conflicts: clone(meta.conflict?.conflicts || []), error };
     for (const callback of subscribers) callback(getStatus());
   }
   async function persist(next) {
@@ -77,10 +78,14 @@ export function createSyncClient({ space, storageKey, getData, applyData, canSyn
   function localChanged() {
     generation += 1;
     if (!ready || stopped) return;
-    if (!user) { emit(navigator.onLine ? 'signed-out' : 'offline'); return; }
-    if (meta.ownerId !== user.id || freshLocal || meta.transition || bindingChanged) { emit('needs-connect'); return; }
-    if (meta.conflict) { emit('conflict'); return; }
-    emit(navigator.onLine ? 'pending' : 'offline'); schedule();
+    // A local edit already tells us that work is pending. Comparing the entire
+    // workspace here would clone and validate every image on each keystroke.
+    // syncNow and logout still perform the full semantic comparison.
+    const changed = Boolean(meta.ownerId);
+    if (!user) { emit(navigator.onLine ? 'signed-out' : 'offline', '', changed); return; }
+    if (meta.ownerId !== user.id || freshLocal || meta.transition || bindingChanged) { emit('needs-connect', '', changed); return; }
+    if (meta.conflict) { emit('conflict', '', changed); return; }
+    emit(navigator.onLine ? 'pending' : 'offline', '', true); schedule();
   }
   async function apply(next) {
     if (!canSync()) throw new Error('请先完成当前编辑并确保本机保存成功，再继续同步。');
@@ -258,7 +263,7 @@ export function createSyncClient({ space, storageKey, getData, applyData, canSyn
     for (const [otherSpace, key] of Object.entries(SPACE_KEYS)) {
       if (otherSpace === space) continue;
       const other = await getSyncMeta(otherSpace), raw = localStorage.getItem(key);
-      if (other?.ownerId === user?.id && (other.conflict || other.transition || (raw && (!other.baseData || !equalData(validateData(JSON.parse(raw)), other.baseData))))) throw new Error('另一个工作区还有未同步的修改，请先打开该工作区完成同步。');
+      if (other?.ownerId === user?.id && (other.conflict || other.transition || (raw && (!other.baseData || !equalData(validateData(await hydrateWorkspace(JSON.parse(raw))), other.baseData))))) throw new Error('另一个工作区还有未同步的修改，请先打开该工作区完成同步。');
     }
     await request('logout', { method: 'POST', body: {} });
     epoch += 1; user = null; emit('signed-out');

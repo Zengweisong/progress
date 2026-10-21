@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test';
 import { seedData, validateData } from '../public/data.js';
 import { readFile } from 'node:fs/promises';
 const key = 'shixu.workspace.v1';
-const read = page => page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
+const read = page => page.evaluate(async key => {
+  const { hydrateWorkspace } = await import('/workspace-storage.js');
+  return hydrateWorkspace(JSON.parse(localStorage.getItem(key)));
+}, key);
 const note = async page => (await read(page)).notes.find(note => note.id === 'n1');
 const source = async page => (await note(page)).body;
 const editor = page => page.getByRole('textbox', { name: '笔记正文', exact: true });

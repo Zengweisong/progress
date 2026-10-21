@@ -172,9 +172,20 @@ test('invalid JSON, revisions, workspace shapes, dangerous keys, size and depth 
   const deep = seedData();
   deep.extra = Array.from({ length: 30 }).reduce(v => [v], 1);
   assert.equal((await put({ expectedRevision: 0, data: deep })).status, 400);
-  assert.equal((await put({ expectedRevision: 0, data: seedData(), padding: 'x'.repeat(5 * 1024 * 1024) })).status, 413);
+  assert.equal((await put({ expectedRevision: 0, data: seedData(), padding: 'x'.repeat(32 * 1024 * 1024) })).status, 413);
   assert.equal((await f.request('/api/login', { method: 'POST', body: { username: 'alice', password, padding: 'x'.repeat(2048) } })).status, 413);
   assert.equal((await f.request('/api/workspace', { cookie: alice.cookie })).data.revision, 0);
+});
+
+test('workspaces larger than the old 5 MB limit round trip without truncation', async t => {
+  const f = await fixture(t), alice = await f.register();
+  const data = seedData(), original = data.notes[0];
+  data.notes = Array.from({ length: 32 }, (_, index) => ({ ...original, id: `large-${index}`, body: 'a'.repeat(190000) }));
+  assert.ok(Buffer.byteLength(JSON.stringify(data)) > 5 * 1024 * 1024);
+  const result = await f.request('/api/workspace', { method: 'PUT', cookie: alice.cookie, body: { expectedRevision: 0, data } });
+  assert.equal(result.status, 200);
+  const loaded = await f.request('/api/workspace', { cookie: alice.cookie });
+  assert.deepEqual(loaded.data.data, data);
 });
 
 test('database survives restart, stores password and session hashes, retains bounded history', async t => {
