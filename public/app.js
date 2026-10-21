@@ -14,6 +14,10 @@ import { renderRoute } from './layouts-matrix-route.js';
 import { renderNotePage } from './note-editor.js';
 import { createLiveNoteEditor } from './live-note-editor.js';
 import { portableMarkdown } from './note-images.js';
+import { hydrateWorkspace, persistAttachments, serializeWorkspace, WORKSPACE_BYTES } from './workspace-storage.js';
+import { archiveWorkspace, getTrashEntries, getRecoveryEntry, deleteRecovery, getSyncMeta } from './sync-db.js';
+import { deletedRecord, removeRecord, restoreRecord } from './recycle-bin.js';
+import { searchWorkspace, highlightText } from './workspace-search.js';
 
 const icons = {
   logo: '<path d="M4 4h10v4H8v8h6v4H4zM18 4h3v16h-3zM11 11h9v3h-9z" fill="currentColor" stroke="none"/>',
@@ -90,6 +94,11 @@ const routeState = { selectedProject: null, filter: 'all', kind: 'note', drafts:
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let data, lastDisk = null, storageError = '', toastTimer, modal = null, syncClient, syncUI;
+let saveGeneration = 0, trashBusy = false, undoTrashId = null, searchType = 'all', searchTarget = null;
+let trashRecords = [];
+const recentKey = 'shixu.recent-records.v1';
+let recentRecords = [];
+try { const recent = JSON.parse(localStorage.getItem(recentKey) || '[]'); if (Array.isArray(recent)) recentRecords = recent.slice(0, 20); } catch { /* Recents are optional device preferences. */ }
 const expandedSections = new Set([route().section]);
 const collapsedNoteCategories = new Set();
 const collapsedProjectCategories = new Set();
@@ -100,8 +109,18 @@ try {
 let filters = { status: '', priority: '', tag: '' }, dragId = null, importCandidate = null;
 try {
   lastDisk = localStorage.getItem(KEY);
-  data = lastDisk ? validateData(JSON.parse(lastDisk)) : seedData();
-} catch { data = seedData(); storageError = '本机数据无法读取，当前显示示例内容'; }
+  data = lastDisk ? validateData(await hydrateWorkspace(JSON.parse(lastDisk))) : seedData();
+  if (lastDisk) {
+    await persistAttachments(data);
+    const compact = serializeWorkspace(data);
+    if (localStorage.getItem(KEY) !== lastDisk) throw new Error('另一个窗口已更新数据，请重新加载');
+    if (compact !== lastDisk) localStorage.setItem(KEY, compact);
+    lastDisk = compact;
+  }
+} catch (error) {
+  if (error.workspace) { try { data = validateData(error.workspace); } catch { /* Never render unvalidated records. */ } }
+  data ||= seedData(); storageError = `本机数据读取或迁移失败：${error.message}`;
+}
 const freshLocal = lastDisk === null && !storageError;
 
 function save(entity) {
@@ -109,9 +128,10 @@ function save(entity) {
   if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return false; }
   try {
     if (localStorage.getItem(KEY) !== lastDisk) throw new Error('另一个窗口已更新数据，请先导出当前编辑，再重新加载');
-    const next = JSON.stringify(data);
+    const next = serializeWorkspace(data);
     localStorage.setItem(KEY, next);
     lastDisk = next;
+    saveGeneration++;
     $$('.save-state').forEach(el => el.innerHTML = `${icon('checkCircle')}本机已保存`);
     syncClient?.localChanged();
     return true;
@@ -122,9 +142,71 @@ function save(entity) {
     return false;
   }
 }
-function toast(message) {
+function toast(message, undoId = null) {
   const el = $('#toast'); el.textContent = message; el.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+  undoTrashId = undoId;
+  if (undoId) { const button = document.createElement('button'); button.type = 'button'; button.dataset.action = 'undo-delete'; button.textContent = '撤销'; el.append(button); }
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), undoId ? 10000 : 3200);
+}
+async function trashContext() {
+  const context = { generation: saveGeneration, disk: lastDisk };
+  const binding = await getSyncMeta('main');
+  return { ...context, owner: binding?.ownerId ?? null, transition: Boolean(binding?.transition) };
+}
+async function assertTrashContext(context) {
+  const binding = await getSyncMeta('main');
+  if (storageError || context.generation !== saveGeneration || context.disk !== lastDisk || localStorage.getItem(KEY) !== lastDisk || context.owner !== (binding?.ownerId ?? null) || context.transition !== Boolean(binding?.transition)) throw new Error('工作区已发生变化，请重新打开后操作。');
+}
+function recordExists(item) {
+  return item.kind === 'project' ? Boolean(getProject(item.record.id)) : item.kind === 'note' ? Boolean(getNote(item.record.id)) : Boolean(getProject(item.projectId)?.tasks.some(t => t.id === item.record.id));
+}
+async function deleteToTrash(kind, id, projectId) {
+  if (trashBusy) return;
+  trashBusy = true;
+  try {
+    const context = await trashContext();
+    await assertTrashContext(context);
+    const item = deletedRecord(data, kind, id, projectId);
+    const archived = await archiveWorkspace('main', context.owner, item.record.title, item, 'trash');
+    await assertTrashContext(context);
+    const previous = data; data = structuredClone(data);
+    removeRecord(data, item);
+    if (!save()) { data = previous; return; }
+    modal = null;
+    if (kind !== 'task') closeDrawer();
+    render(); toast('已移到本机回收站。', archived.id);
+  } catch (error) { toast(error.message || '恢复副本保存失败，记录尚未删除。'); }
+  finally { trashBusy = false; }
+}
+async function openTrash() {
+  try {
+    const context = await trashContext(), records = await getTrashEntries('main', context.owner);
+    await assertTrashContext(context);
+    trashRecords = records.filter(record => record.kind === 'trash' && record.userId === context.owner && !recordExists(record.data)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    showModal('trash');
+  } catch (error) { toast(error.message || '回收站读取失败，请重试。'); }
+}
+async function restoreTrash(id) {
+  if (trashBusy) return;
+  trashBusy = true;
+  try {
+    const context = await trashContext(), archived = await getRecoveryEntry(id);
+    if (!archived || archived.space !== 'main' || archived.kind !== 'trash' || archived.userId !== context.owner) throw new Error('当前工作区中找不到这条恢复记录。');
+    await assertTrashContext(context);
+    const next = restoreRecord(structuredClone(data), archived.data);
+    await persistAttachments(next);
+    await assertTrashContext(context);
+    const previous = data; data = next;
+    if (!save()) { data = previous; return; }
+    // Keeping an already restored entry after an IndexedDB cleanup failure is
+    // harmless; the list hides existing IDs and restoration never overwrites.
+    try { await deleteRecovery(id); } catch { /* The restored record is durable. */ }
+    undoTrashId = null;
+    if (modal?.type === 'trash') { trashRecords = trashRecords.filter(item => item.id !== id); render(); }
+    else render();
+    toast('已恢复，内容与关联已保留。');
+  } catch (error) { toast(error.message || '恢复失败，请重试。'); }
+  finally { trashBusy = false; }
 }
 function saveTaskChange(project, change) {
   if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return false; }
@@ -436,7 +518,7 @@ function modalMarkup() {
   }
   if (modal.type === 'category') return modalShell(modal.previousName === null ? '新建二级分类' : '编辑二级分类', `<p class="modal-subtitle">归属位置：${esc(sectionNames[modal.section])}</p><form id="category-form"><label class="form-field"><span>分类名称</span><input name="name" id="create-title" maxlength="60" value="${esc(modal.previousName === '' ? '未分类' : modal.previousName || '')}" placeholder="例如：工作、学习、生活" required autocomplete="off"></label>${modal.previousName === null ? '' : '<button type="button" class="danger-link category-delete" data-action="delete-category">删除分类</button>'}${formActions(modal.previousName === null ? '创建分类' : '保存修改')}</form>`);
   if (modal.type === 'confirm-category-delete') return modalShell('删除这个分类？', `<p class="body-copy">删除「${esc(modal.previousName || '未分类')}」分类后，内容和关联都会保留。${modal.previousName === '' ? '文章直接列在侧栏，不再显示这个分类。' : '其中的项目或笔记将取消分类。'}</p><div class="form-actions"><button type="button" class="button" data-action="close-modal">取消</button><button type="button" class="button danger" data-action="confirm-delete-category">删除分类</button></div>`);
-  if (modal.type === 'search') return `<section class="modal search-modal" role="dialog" aria-modal="true" aria-label="搜索全部"><div class="search-input-wrap">${icon('search')}<input class="search-input" id="global-search" autocomplete="off" aria-label="搜索项目、任务和笔记" placeholder="搜索项目、任务和笔记…"><button class="icon-button" data-action="close-modal" aria-label="关闭搜索">${icon('close')}</button></div><div class="search-results" id="search-results">${searchResults('')}</div><div class="search-hint"><kbd>Esc</kbd>关闭搜索<span style="margin-left:auto">只搜索此工作区内容</span></div></section>`;
+  if (modal.type === 'search') return `<section class="modal search-modal" role="dialog" aria-modal="true" aria-label="搜索全部"><div class="search-input-wrap">${icon('search')}<input class="search-input" id="global-search" autocomplete="off" aria-label="搜索项目、任务和笔记" placeholder="搜索项目、任务和笔记…"><button class="icon-button" data-action="close-modal" aria-label="关闭搜索">${icon('close')}</button></div><div class="search-types" role="group" aria-label="搜索类型">${[['all', '全部'], ['project', '项目'], ['task', '任务'], ['note', '笔记']].map(([value, label]) => `<button type="button" data-search-type="${value}" aria-pressed="${searchType === value}">${label}</button>`).join('')}</div><div class="search-results" id="search-results" aria-live="polite">${searchResults('')}</div><div class="search-hint"><span><kbd>↑ ↓</kbd>选择 · <kbd>Enter</kbd>打开 · <kbd>Esc</kbd>关闭</span><span>当前工作区</span></div></section>`;
   if (modal.type === 'new-project') return modalShell('新建项目', `<form id="project-form"><label class="form-field"><span>项目名称</span><input name="title" id="create-title" maxlength="200" placeholder="例如：我的个人网站" required autocomplete="off"></label><label class="form-field"><span>项目说明</span><textarea name="description" maxlength="20000" placeholder="这个项目想完成什么？"></textarea></label><div class="form-row">${selectField('状态', 'status', statuses.map(s => [s.id, s.label]), modal.status || 'planned')}${selectField('优先级', 'priority', Object.entries(priorities), modal.priority || 'medium')}</div><div class="form-row"><label class="form-field"><span>截止日期（可选）</span>${renderDateInput({ esc, icon, id: 'create-project-due', label: '截止日期（可选）', attributes: 'name="due"' })}</label><label class="form-field"><span>分类（可选）</span><input name="tag" maxlength="60" list="project-category-options" value="${esc(modal.category ?? (route().section === 'projects' ? route().category || '' : ''))}" placeholder="如：生活、创作"><datalist id="project-category-options">${categoryNames(data, 'projects').map(name => `<option value="${esc(name)}"></option>`).join('')}</datalist></label></div>${formActions('创建项目')}</form>`);
   if (modal.type === 'filter') return modalShell('筛选项目', `<form id="filter-form">${selectField('项目状态', 'status', [['', '全部状态'], ...statuses.map(s => [s.id, s.label])], filters.status)}${selectField('优先级', 'priority', [['', '全部优先级'], ...Object.entries(priorities)], filters.priority)}${selectField('项目分类', 'tag', [['', '全部分类'], ...[...new Set(data.projects.map(p => p.tag).filter(Boolean))].map(t => [t, t])], filters.tag)}${formActions('应用筛选')}</form>`);
   if (modal.type === 'view-options') return modalShell('视图设置', `<form id="view-form">${selectField('看板分组', 'group', [['status', '按项目状态'], ['priority', '按优先级']], data.preferences.group)}${formActions('保存设置')}</form>`);
@@ -448,21 +530,39 @@ function modalMarkup() {
     const n = getNote(modal.id);
     return modalShell('关联项目', `<form id="link-projects-form"><div class="check-list">${data.projects.map(p => `<label class="check-item"><input type="checkbox" name="projects" value="${esc(p.id)}" ${n?.projectIds.includes(p.id) ? 'checked' : ''}>${icon(p.icon)}${esc(p.title)}</label>`).join('') || '<p class="drawer-muted">先创建一个项目，再来建立关联。</p>'}</div>${formActions('保存关联')}</form>`);
   }
-  if (modal.type === 'settings') return modalShell('数据与备份', `<p class="modal-subtitle">记录自动保存在本机。登录账号可启用多端同步，也可以随时导出备份。</p>${storageError ? `<div class="notice" role="alert">${esc(storageError)}。请先导出当前内容再重新加载，以免丢失尚未保存的编辑。</div>` : ''}<div class="data-actions"><button class="data-action" data-action="export">${icon('download')}<span><strong>导出完整数据</strong><small>JSON 格式 · 包含项目、任务、笔记和关联</small></span>${icon('chevron')}</button><button class="data-action" data-action="import">${icon('upload')}<span><strong>导入为独立副本</strong><small>保留现有内容，使用新的记录 ID 导入</small></span>${icon('chevron')}</button><button class="data-action" data-action="help">${icon('help')}<span><strong>使用与快捷键</strong><small>了解当前原型可以体验的功能</small></span>${icon('chevron')}</button></div><p class="modal-subtitle" style="margin:20px 0 0">当前有 ${data.projects.length} 个项目、${data.notes.length} 篇笔记。<br>清理浏览器数据可能移除本地内容，请定期导出。</p><input type="file" id="import-file" accept=".json,application/json" hidden>`);
-  if (modal.type === 'help') return modalShell('从一个小进展开始', `<p class="body-copy">项目卡片可以拖动。打开项目后，可以更新状态、完成任务，并把已有笔记关联进来。知识库中的同一篇笔记可以关联多个项目。</p><div class="notice">项目、任务和笔记自动保存在本机。在“账号与多端同步”中登录并连接工作区后，修改会自动上传，页面每 15 秒检查其他设备的更新。编辑中或有未保存草稿时暂缓同步；断网可继续记录，联网后自动重试。自定义属性在表格视图添加，暂不支持附件。</div><div class="help-shortcuts"><span>搜索全部内容</span><kbd>Ctrl / ⌘ K</kbd><span>快速记下想法</span><kbd>N</kbd><span>关闭当前弹窗或详情</span><kbd>Esc</kbd></div>`);
-  if (modal.type === 'confirm-delete') return modalShell(`删除${modal.kind === 'project' ? '项目' : '笔记'}`, `<p class="body-copy">确定删除「${esc(modal.title)}」吗？${modal.kind === 'project' ? '项目内的任务会一起删除，关联笔记仍保留在知识库中。' : '笔记将从所有关联项目中移除。'}此操作无法直接撤销。</p><div class="form-actions"><button class="button" data-action="close-modal">取消</button><button class="button danger" data-action="confirm-delete">确认删除</button></div>`);
-  if (modal.type === 'confirm-import') return modalShell('导入为独立副本', `<p class="body-copy">将导入 ${importCandidate.projects.length} 个项目和 ${importCandidate.notes.length} 篇笔记。现有内容会保留；导入的项目和笔记会标记“（导入）”，并使用新的 ID 保持副本间的关联。</p><div class="notice">本次导入仅包含项目、任务、笔记及自定义属性；当前视图设置保持不变。原型暂不支持附件。</div><div class="form-actions"><button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="confirm-import">导入副本</button></div>`);
+  if (modal.type === 'settings') return modalShell('数据与备份', `<p class="modal-subtitle">记录自动保存在本机。登录账号可启用多端同步，也可以随时导出备份。</p>${storageError ? `<div class="notice" role="alert">${esc(storageError)}。请先导出当前内容再重新加载，以免丢失尚未保存的编辑。</div>` : ''}<div class="data-actions"><button class="data-action" data-action="export">${icon('download')}<span><strong>导出完整数据</strong><small>JSON 格式 · 包含项目、任务、笔记和关联</small></span>${icon('chevron')}</button><button class="data-action" data-action="import">${icon('upload')}<span><strong>导入为独立副本</strong><small>保留现有内容，使用新的记录 ID 导入</small></span>${icon('chevron')}</button><button class="data-action" data-action="trash">${icon('trash')}<span><strong>本机回收站</strong><small>恢复误删的项目、任务和笔记</small></span>${icon('chevron')}</button><button class="data-action" data-action="help">${icon('help')}<span><strong>使用与快捷键</strong><small>了解当前原型可以体验的功能</small></span>${icon('chevron')}</button></div><p class="modal-subtitle" style="margin:20px 0 0">当前有 ${data.projects.length} 个项目、${data.notes.length} 篇笔记。<br>清理浏览器数据可能移除本地内容，请定期导出。</p><input type="file" id="import-file" accept=".json,application/json" hidden>`);
+  if (modal.type === 'help') return modalShell('从一个小进展开始', `<p class="body-copy">项目卡片可以拖动。打开项目后，可以更新状态、完成任务，并把已有笔记关联进来。知识库中的同一篇笔记可以关联多个项目。</p><div class="notice">项目、任务和笔记自动保存在本机。在“账号与多端同步”中登录并连接工作区后，修改会自动上传，页面每 15 秒检查其他设备的更新。编辑中或有未保存草稿时暂缓同步；断网可继续记录，联网后自动重试。自定义属性在表格视图添加。笔记支持插入、粘贴和拖入图片；删除后可从本机回收站恢复。</div><div class="help-shortcuts"><span>搜索全部内容</span><kbd>Ctrl / ⌘ K</kbd><span>快速记下想法</span><kbd>N</kbd><span>关闭当前弹窗或详情</span><kbd>Esc</kbd></div>`);
+  if (modal.type === 'trash') return modalShell('本机回收站', `<p class="body-copy">当前设备与工作区的删除副本。恢复后可以继续同步；其他设备的回收站独立保存。</p><div class="trash-list">${trashRecords.map(item => `<div class="trash-row"><div><strong>${esc(item.label)}</strong><small>${{ project: '项目（含任务）', note: '笔记', task: '任务' }[item.data.kind]} · ${esc(new Date(item.createdAt).toLocaleString('zh-CN'))}</small></div><div class="trash-actions"><button type="button" class="button small" data-action="restore-trash" data-id="${esc(item.id)}" aria-label="恢复：${esc(item.label)}">恢复</button><button type="button" class="danger-link" data-action="delete-trash" data-id="${esc(item.id)}" aria-label="永久删除：${esc(item.label)}">永久删除</button></div></div>`).join('') || '<p class="body-copy">回收站为空。</p>'}</div>`);
+  if (modal.type === 'confirm-purge') return modalShell('永久删除恢复副本？', `<p class="body-copy">这条本机恢复副本将被永久删除，之后无法通过回收站恢复。</p><div class="form-actions"><button class="button" data-action="trash">返回回收站</button><button class="button danger" data-action="confirm-purge">永久删除</button></div>`);
+  if (modal.type === 'confirm-delete') return modalShell(`删除${modal.kind === 'project' ? '项目' : '笔记'}`, `<p class="body-copy">确定删除「${esc(modal.title)}」吗？${modal.kind === 'project' ? '项目内的任务会一起删除，关联笔记仍保留在知识库中。' : '笔记将从所有关联项目中移除。'}删除前会保存本机恢复副本，可在“数据与备份 → 本机回收站”恢复。</p><div class="form-actions"><button class="button" data-action="close-modal">取消</button><button class="button danger" data-action="confirm-delete">确认删除</button></div>`);
+  if (modal.type === 'confirm-import') return modalShell('导入为独立副本', `<p class="body-copy">将导入 ${importCandidate.projects.length} 个项目和 ${importCandidate.notes.length} 篇笔记。现有内容会保留；导入的项目和笔记会标记“（导入）”，并使用新的 ID 保持副本间的关联。</p><div class="notice">本次导入仅包含项目、任务、笔记及自定义属性；当前视图设置保持不变。笔记图片会随副本一并导入。</div><div class="form-actions"><button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="confirm-import">导入副本</button></div>`);
   return '';
 }
 function searchResults(query) {
-  const q = query.trim().toLocaleLowerCase(), results = [];
-  if (!q) return `<div class="recent-heading">继续最近的项目</div>${data.projects.slice(0, 5).map(p => `<button class="search-result" data-project="${esc(p.id)}">${icon(p.icon)}<span><strong>${esc(p.title)}</strong><small>项目 · ${statusBy(p.status).label}</small></span></button>`).join('') || '<div class="search-empty">输入关键词，查找项目、任务和笔记。</div>'}`;
-  for (const p of data.projects) {
-    if (`${p.title} ${p.description}`.toLocaleLowerCase().includes(q)) results.push(`<button class="search-result" data-project="${esc(p.id)}">${icon(p.icon)}<span><strong>${esc(p.title)}</strong><small>项目 · ${statusBy(p.status).label}</small></span></button>`);
-    for (const t of p.tasks) if (t.title.toLocaleLowerCase().includes(q)) results.push(`<button class="search-result" data-project="${esc(p.id)}">${icon('checkCircle')}<span><strong>${esc(t.title)}</strong><small>任务 · ${esc(p.title)}</small></span></button>`);
+  const q = query.trim();
+  if (!q) {
+    const recent = recentRecords.flatMap(item => {
+      const record = item?.kind === 'project' ? getProject(item.id) : item?.kind === 'note' ? getNote(item.id) : null;
+      return record ? [{ ...record, kind: item.kind, snippet: '' }] : [];
+    });
+    const source = recent.length ? recent : [...data.projects.map(p => ({ ...p, kind: 'project' })), ...data.notes.map(n => ({ ...n, kind: 'note' }))].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const results = source.filter(item => searchType === 'all' || item.kind === searchType).slice(0, 8);
+    return `<div class="recent-heading">${recent.length ? '最近打开' : '最近更新'}</div>${results.map(item => searchResult(item, '')).join('') || '<div class="search-empty">输入关键词，查找项目、任务和笔记。</div>'}`;
   }
-  for (const n of data.notes) if (`${n.title} ${n.body} ${n.tags.join(' ')}`.toLocaleLowerCase().includes(q)) results.push(`<button class="search-result" data-note="${esc(n.id)}">${icon('note')}<span><strong>${esc(n.title)}</strong><small>${isNoteFavorite(n) ? '收藏夹' : '知识库'} · ${esc(n.category)}</small></span></button>`);
-  return results.slice(0, 40).join('') || '<div class="search-empty">没有找到相关内容，换个关键词试试。</div>';
+  const { results, total } = searchWorkspace(data, q, searchType);
+  return total ? `<div class="recent-heading">找到 ${total} 条${total > results.length ? ` · 显示前 ${results.length} 条，请缩小搜索范围` : ''}</div>${results.map(item => searchResult(item, q)).join('')}` : '<div class="search-empty">没有找到相关内容，换个关键词或类型试试。</div>';
+}
+function searchResult(item, query) {
+  const attrs = item.kind === 'note' ? `data-note="${esc(item.id)}"` : item.kind === 'task' ? `data-project="${esc(item.projectId)}" data-search-task="${esc(item.id)}"` : `data-project="${esc(item.id)}"`;
+  const label = item.kind === 'task' ? `任务 · ${item.projectTitle}` : item.kind === 'note' ? `笔记${item.category ? ` · ${item.category}` : ''}` : '项目';
+  return `<button type="button" class="search-result" ${attrs}>${icon(item.kind === 'task' ? 'checkCircle' : item.kind === 'note' ? 'note' : 'layers')}<span><strong>${highlightText(item.title, query, esc)}</strong><small>${esc(label)}${item.archived ? ' · 已归档' : ''}</small>${item.snippet ? `<span class="search-snippet">${highlightText(item.snippet, query, esc)}</span>` : ''}</span></button>`;
+}
+function rememberRecent(current) {
+  const kind = current.kind;
+  if (!['project', 'note'].includes(kind) || !(kind === 'project' ? getProject(current.id) : getNote(current.id))) return;
+  if (recentRecords[0]?.kind === kind && recentRecords[0]?.id === current.id) return;
+  recentRecords = [{ kind, id: current.id }, ...recentRecords.filter(item => item?.kind !== kind || item?.id !== current.id)].slice(0, 20);
+  try { localStorage.setItem(recentKey, JSON.stringify(recentRecords)); } catch { /* Navigation does not depend on history storage. */ }
 }
 
 let pretextObserver;
@@ -496,6 +596,7 @@ function render() {
   const stationScroll = new Map($$('.mr-route-line .mr-stations-scroll').map(scroll => [scrollKey(scroll), scroll.scrollLeft]));
   const scrollTop = $('.drawer-scroll')?.scrollTop || 0;
   const current = route(), project = current.kind === 'project' && getProject(current.id), note = current.kind === 'note' && getNote(current.id);
+  rememberRecent(current);
   document.title = `拾序 · ${project?.title || note?.title || { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹' }[current.section]}`;
   $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${current.kind === 'new-note' ? newNotePage() : note ? renderNotePage({ note, esc, icon, fullWidth: noteFullWidth }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
   sidebarControls.refresh();
@@ -514,6 +615,17 @@ function render() {
   if (activeTask && activeTaskProject) $$('[data-task][data-project-id]').find(el => el.dataset.task === activeTask && el.dataset.projectId === activeTaskProject && !el.closest('[inert]'))?.focus({ preventScroll: true });
   requestAnimationFrame(wirePretext);
   syncUI?.refresh();
+  if (searchTarget && ((searchTarget.taskId && project?.id === searchTarget.projectId) || (searchTarget.noteId && note?.id === searchTarget.noteId))) {
+    const target = searchTarget; searchTarget = null;
+    requestAnimationFrame(() => {
+      if (target.noteId) { liveEditor.focusMatch(target.query); return; }
+      const row = $$('.drawer [data-task-row]').find(el => el.dataset.taskRow === target.taskId);
+      if (row) {
+        row.classList.add('search-located'); row.scrollIntoView({ block: 'center' });
+        row.querySelector('.module-task-title')?.focus({ preventScroll: true });
+      } else if (getProject(target.projectId)?.tasks.some(task => task.id === target.taskId)) showModal('task', { projectId: target.projectId, id: target.taskId });
+    });
+  }
 }
 function showModal(type, options = {}) {
   modal = { type, ...options }; render();
@@ -524,7 +636,7 @@ function dismissModal() {
   ($('.drawer .icon-button') || $('.note-back') || (hadSearch ? $('.top-actions [data-action=search]') : $('[data-action=new-project]')) || $('.mobile-nav .mobile-create'))?.focus({ preventScroll: true });
 }
 
-document.addEventListener('click', event => {
+document.addEventListener('click', async event => {
   const line = event.target.closest('.workspace-route .mr-route-line');
   if (line && !event.target.closest('.project-modules,form,label,input,textarea,select,a,button:not([data-select-project])')) {
     const id = line.querySelector('[data-select-project]').dataset.selectProject;
@@ -569,8 +681,21 @@ document.addEventListener('click', event => {
     return;
   }
   if (target.getAttribute('href') === '#main') { event.preventDefault(); $('#main').setAttribute('tabindex', '-1'); $('#main').focus(); return; }
+  if (target.dataset.searchType) {
+    searchType = target.dataset.searchType;
+    $$('[data-search-type]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.searchType === searchType)));
+    $('#search-results').innerHTML = searchResults($('#global-search').value);
+    return;
+  }
+  if (target.dataset.searchTask) {
+    searchTarget = { projectId: target.dataset.project, taskId: target.dataset.searchTask };
+    openProject(target.dataset.project); return;
+  }
   if (target.dataset.project) { openProject(target.dataset.project); return; }
-  if (target.dataset.note) { openNote(target.dataset.note); return; }
+  if (target.dataset.note) {
+    if (target.closest('#search-results') && $('#global-search')?.value.trim()) searchTarget = { noteId: target.dataset.note, query: $('#global-search').value.trim() };
+    openNote(target.dataset.note); return;
+  }
   if (workspaceViews.includes(target.dataset.view)) {
     routeState.projectOrder = null;
     workspaceView = target.dataset.view;
@@ -616,7 +741,7 @@ document.addEventListener('click', event => {
       } catch (error) { data = previous; toast(error.message); }
       break;
     }
-    case 'search': showModal('search'); break;
+    case 'search': searchType = 'all'; showModal('search'); break;
     case 'account': syncUI?.open(); break;
     case 'settings': showModal('settings'); break;
     case 'help': showModal('help'); break;
@@ -661,7 +786,7 @@ document.addEventListener('click', event => {
       }
       break;
     }
-    case 'delete-task': { const p = getProject(target.dataset.projectId || route().id); if (p && saveTaskChange(p, () => { p.tasks = p.tasks.filter(t => t.id !== target.dataset.id); })) dismissModal(); break; }
+    case 'delete-task': await deleteToTrash('task', target.dataset.id, target.dataset.projectId || route().id); break;
     case 'toggle-note-favorite': {
       const note = currentNote(); if (!note) break;
       const previous = structuredClone(note);
@@ -699,14 +824,24 @@ document.addEventListener('click', event => {
     }
     case 'delete-project': { const p = getProject(target.dataset.id); if (p) showModal('confirm-delete', { kind: 'project', id: p.id, title: p.title }); break; }
     case 'delete-note': { const n = getNote(target.dataset.id); if (n) showModal('confirm-delete', { kind: 'note', id: n.id, title: n.title }); break; }
-    case 'confirm-delete': {
-      if (modal.kind === 'project') { data.projects = data.projects.filter(p => p.id !== modal.id); for (const n of data.notes) if (n.projectIds.includes(modal.id)) { n.projectIds = n.projectIds.filter(id => id !== modal.id); n.updatedAt = new Date().toISOString(); } }
-      else data.notes = data.notes.filter(n => n.id !== modal.id);
-      modal = null; const saved = save(); closeDrawer(); render(); if (saved) toast('已删除。'); break;
+    case 'confirm-delete': if (modal?.type === 'confirm-delete') await deleteToTrash(modal.kind, modal.id); break;
+    case 'trash': await openTrash(); break;
+    case 'restore-trash': await restoreTrash(target.dataset.id); break;
+    case 'undo-delete': if (undoTrashId) await restoreTrash(undoTrashId); break;
+    case 'delete-trash': showModal('confirm-purge', { id: target.dataset.id }); break;
+    case 'confirm-purge': {
+      if (modal?.type !== 'confirm-purge') break;
+      try {
+        const id = modal.id, context = await trashContext(), record = await getRecoveryEntry(id);
+        if (!record || record.space !== 'main' || record.kind !== 'trash' || record.userId !== context.owner) throw new Error('当前工作区中找不到这条恢复记录。');
+        await assertTrashContext(context);
+        await deleteRecovery(id); await openTrash(); toast('已永久移除这条本机恢复副本。');
+      } catch (error) { toast(error.message); }
+      break;
     }
     case 'export': exportData(); break;
     case 'import': $('#import-file')?.click(); break;
-    case 'confirm-import': importData(); break;
+    case 'confirm-import': await importData(); break;
   }
 });
 
@@ -818,7 +953,7 @@ document.addEventListener('change', async event => {
   }
   if (el.id === 'import-file' && el.files[0]) {
     try {
-      const file = el.files[0]; if (file.size > 5 * 1024 * 1024) throw new Error('原型支持导入 5 MB 以内的备份。');
+      const file = el.files[0]; if (file.size > WORKSPACE_BYTES) throw new Error('支持导入 32 MB 以内的备份。');
       importCandidate = validateData(JSON.parse(await file.text()));
       showModal('confirm-import');
     } catch (error) { toast(error instanceof SyntaxError ? '文件不是有效的 JSON 备份。' : error.message); el.value = ''; }
@@ -828,9 +963,13 @@ function exportData() {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = `拾序备份-${new Date().toLocaleDateString('sv-SE')}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast('备份已生成，请在浏览器下载列表中查看。');
 }
-function importData() {
+async function importData() {
   if (!importCandidate) return;
-  const incoming = structuredClone(importCandidate), projectIds = new Map(), fieldIds = new Map();
+  const candidate = importCandidate, generation = saveGeneration;
+  const incoming = structuredClone(candidate), projectIds = new Map(), fieldIds = new Map();
+  try { await persistAttachments(incoming); }
+  catch (error) { toast(error.message || '图片保存失败，尚未导入。'); return; }
+  if (importCandidate !== candidate || saveGeneration !== generation || modal?.type !== 'confirm-import') { toast('内容已发生变化，请重新导入。'); return; }
   for (const f of incoming.fields) { const old = f.id; f.id = uid(); fieldIds.set(old, f.id); }
   for (const p of incoming.projects) {
     const old = p.id; p.id = uid(); projectIds.set(old, p.id); p.title = `${p.title.slice(0, 194)}（导入）`;
@@ -840,7 +979,9 @@ function importData() {
   const folders = incoming.folders.filter(folder => !data.folders.some(existing => existing.section === folder.section && existing.name === folder.name)).map(folder => ({ ...folder, id: uid() }));
   const combined = { ...data, projects: [...data.projects, ...incoming.projects], notes: [...data.notes, ...incoming.notes], fields: [...data.fields, ...incoming.fields], folders: [...data.folders, ...folders] };
   try { validateData(combined); } catch { toast('导入后会超出原型容量，请减少备份中的记录或属性数量。'); return; }
-  data = combined; const saved = save(); importCandidate = null; dismissModal(); if (saved) toast('副本已导入，现有内容已保留。');
+  const previous = data; data = combined; const saved = save();
+  if (!saved) { data = previous; return; }
+  importCandidate = null; dismissModal(); toast('副本已导入，现有内容已保留。');
 }
 document.addEventListener('keydown', event => {
   if (event.target.closest('#sync-dialog')) return;
@@ -849,14 +990,23 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && CSS.supports('selector(select:open)') && event.target.closest('select')?.matches(':open')) return;
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && event.target.closest('#route-capture-form')) { event.preventDefault(); event.target.closest('form').requestSubmit(); return; }
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName) || event.target.isContentEditable;
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); showModal('search'); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchType = 'all'; showModal('search'); return; }
+  if (modal?.type === 'search' && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
+    const results = $$('#search-results .search-result'), index = results.indexOf(document.activeElement);
+    if (event.key === 'Enter' && event.target.id === 'global-search') { event.preventDefault(); results[0]?.click(); return; }
+    if (event.key !== 'Enter' && (event.target.id === 'global-search' || index >= 0)) {
+      event.preventDefault();
+      const next = index < 0 ? event.key === 'ArrowDown' ? 0 : results.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length;
+      results[next]?.focus(); return;
+    }
+  }
   if (event.key === 'Escape') { if (modal) dismissModal(); else if (route().kind && !event.target.closest('.cm-editor')) closeDrawer(); return; }
   if (!typing && event.key.toLowerCase() === 'n' && !event.ctrlKey && !event.metaKey && !event.altKey && !modal && !route().kind) { event.preventDefault(); openNoteCreate(); return; }
   const card = event.target.closest('[role=button][data-project],[role=button][data-note],tr[data-project]');
   if (card && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); card.dataset.project ? openProject(card.dataset.project) : openNote(card.dataset.note); }
   const dialog = $('.modal') || $('.drawer');
   if (event.key === 'Tab' && dialog) {
-    const controls = $$('button:not(:disabled),a[href],input:not([hidden]),select,textarea,[tabindex="0"]', dialog).filter(e => !e.closest('[inert]') && e.getClientRects().length);
+    const controls = [...$$('button:not(:disabled),a[href],input:not([hidden]),select,textarea,[tabindex="0"]', dialog), ...$$('#toast.show button')].filter(e => !e.closest('[inert]') && e.getClientRects().length);
     const first = controls[0], last = controls.at(-1);
     if (event.shiftKey && (document.activeElement === first || !controls.includes(document.activeElement))) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && (document.activeElement === last || !controls.includes(document.activeElement))) { event.preventDefault(); first?.focus(); }
@@ -925,13 +1075,17 @@ syncClient = createSyncClient({
   space: 'main', storageKey: KEY, freshLocal,
   getData: () => data,
   canSync: canSyncWorkspace,
-  applyData(next) {
+  async applyData(next) {
     if (!canSyncWorkspace()) return false;
     try {
+      const generation = saveGeneration;
       const incoming = validateData(next);
+      await persistAttachments(incoming);
+      if (!canSyncWorkspace() || saveGeneration !== generation) return false;
       if (incoming.projects.some(project => project.order !== undefined && project.order !== getProject(project.id)?.order)) incoming.preferences.sort = 'manual';
-      const serialized = JSON.stringify(incoming);
+      const serialized = serializeWorkspace(incoming);
       localStorage.setItem(KEY, serialized); lastDisk = serialized; data = incoming;
+      saveGeneration++;
       render(); return true;
     } catch { return false; }
   },
