@@ -31,7 +31,7 @@ async function createCategory(page, section, name, mobile) {
   else {
     const expand = page.locator(`[data-nav-expand="${section}"]`);
     if (await expand.getAttribute('aria-expanded') !== 'true') await expand.click();
-    await page.locator(`#nav-children-${section}`).getByRole('button', { name: '新建分类', exact: true }).click();
+    await (section === 'projects' ? page.getByRole('button', { name: '新建项目分类', exact: true }) : page.getByRole('button', { name: `新建${section === 'knowledge' ? '知识库' : '收集箱'}分类`, exact: true })).click();
   }
   const dialog = page.getByRole('dialog', { name: '新建二级分类', exact: true });
   await dialog.getByRole('textbox', { name: '分类名称', exact: true }).fill(name);
@@ -122,7 +122,7 @@ test('category management rejects duplicates and safely renders custom names', a
   await expect(page.locator('.breadcrumb')).toContainText(name);
   await expect(page.locator('.sidebar img')).toHaveCount(0);
   if (mobile) await page.getByRole('button', { name: '新建二级分类', exact: true }).click();
-  else await page.locator('#nav-children-projects').getByRole('button', { name: '新建分类', exact: true }).click();
+  else await page.getByRole('button', { name: '新建项目分类', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '新建二级分类', exact: true });
   await dialog.getByRole('textbox', { name: '分类名称', exact: true }).fill(name);
   await dialog.getByRole('button', { name: '创建分类', exact: true }).click();
@@ -160,7 +160,6 @@ for (const [section, category, title] of [
   ['projects', '学习', '分类旁新建的项目'],
   ['knowledge', '技术实践', '分类旁新建的笔记'],
   ['inbox', '产品与设计', '分类旁新建的想法'],
-  ['projects', '', '未分类的新页面'],
 ]) {
   test(`category plus creates a page in ${section}/${category || 'uncategorized'}`, async ({ page }, info) => {
     const mobile = info.project.name === 'mobile';

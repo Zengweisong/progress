@@ -510,8 +510,9 @@
 .nav-group { margin: 3px 0; }
 .nav-group-heading { display: flex; align-items: center; border-radius: 7px; }
 .nav-group.is-current > .nav-group-heading { background: #e5eee2; }
-.sidebar .nav-group-heading .nav-item { flex: 1; min-width: 0; margin: 0; padding-right: 5px; background: transparent; }
-.nav-expand { display: flex; align-items: center; justify-content: center; width: 25px; height: 32px; margin-right: 3px; border-radius: 4px; color: #91a18e; }
+.sidebar .nav-group-heading .nav-item { flex: 1; min-width: 0; margin: 0; gap: 8px; padding-inline: 10px 4px; background: transparent; white-space: nowrap; }
+.nav-group-heading .nav-count { flex-shrink: 0; }
+.nav-expand { display: flex; align-items: center; justify-content: center; flex: 0 0 22px; width: 22px; height: 32px; margin-right: 3px; padding: 0; border-radius: 4px; color: #91a18e; }
 .nav-expand:hover { color: var(--primary); background: #dce8d8; }
 .nav-expand svg { width: 12px; height: 12px; transform: rotate(-90deg); }
 .nav-expand[aria-expanded=true] svg { transform: none; }
@@ -528,8 +529,32 @@
 .nav-project-dot.active { background: #7386e7; }
 .nav-project-dot.review { background: #d6ac61; }
 .nav-project-dot.done { background: #7bb39a; }
-.nav-project-actions { display: flex; align-items: center; gap: 10px; padding-left: 28px; }
-.nav-project-actions .nav-category-add { margin-left: 0; font-size: 11px; }
+.nav-section-create { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 24px; width: 24px; height: 30px; padding: 0; border-radius: 4px; color: #91a18e; }
+.nav-section-create svg { width: 13px; height: 13px; }
+.nav-section-create:hover { background: #dce8d8; color: var(--primary); }
+.archive-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin: 0 0 12px; }
+.archive-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.archive-row > button:first-child { flex: 1; min-width: 0; text-align: left; overflow-wrap: anywhere; }
+.archive-row > button:first-child small { display: block; color: var(--muted); font-size: 11px; }
+.archive-row > .button { flex-shrink: 0; }
+.archive-list { max-height: 55dvh; overflow-y: auto; }
+.nav-project-category .nav-category-create { opacity: 1; }
+[data-record-drag] { touch-action: none; cursor: grab; }
+.record-drag-handle { display: inline-grid; place-items: center; flex-shrink: 0; padding: 0; color: #91a18e; border-radius: 4px; }
+.record-drag-handle:hover { color: var(--primary); background: #e5eee2; }
+.home-record-handle { width: 22px; height: 30px; margin-right: 6px; }
+.home-record-handle svg { width: 14px; height: 18px; }
+.workspace-projects .mr-line-heading .mr-line-select { flex: 1; }
+.note-record-handle { width: 28px; height: 28px; margin: 0 0 10px -3px; align-self: flex-start; color: #9aa9d4; }
+.note-record-handle svg { width: 21px; height: 21px; }
+.record-dragging { opacity: .4; }
+.record-drop-before { box-shadow: 0 -2px 0 #39796a; }
+.record-drop-after { box-shadow: 0 2px 0 #39796a; }
+.record-drop-inside { outline: 2px solid #88b39b; outline-offset: -2px; border-radius: 5px; background: #e5eee2; }
+.record-drag-ghost { position: fixed; left: 0; top: 0; z-index: 1300; pointer-events: none; max-width: min(300px, 80vw); padding: 9px 13px; border: 1px solid #a9c2b4; border-radius: 7px; background: #fff; color: #27332d; box-shadow: 0 6px 20px #27332d20; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; will-change: transform; }
+body.is-record-dragging { user-select: none; cursor: grabbing; }
+body.is-record-dragging [data-record-drag] { cursor: grabbing; }
+body.is-record-dragging .note-card:hover { transform: none; }
 .nav-category-row { display: flex; align-items: center; gap: 2px; padding-right: 3px; }
 .nav-subitem { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 30px; padding: 5px 6px 5px 32px; border-radius: 5px; color: #87917f; font-size: 14px; line-height: 20px; }
 .nav-subitem:hover { color: var(--primary); background: #edf2e8; }

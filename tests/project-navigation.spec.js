@@ -34,6 +34,7 @@ test('uncategorized projects display their names and the workspace has no slogan
 test('custom categories list their projects and preserve navigation on close and reload', async ({ page }, info) => {
   test.skip(info.project.name === 'mobile', 'Desktop sidebar navigation');
   await prepare(page, true);
+  await page.screenshot({ path: `.tools/sidebar-actions-${info.project.name}.png`, fullPage: true });
   const group = page.locator('.nav-project-category').filter({ has: page.locator('.nav-category-name', { hasText: /^工作$/ }) });
   await expect(group.locator('[data-sidebar-project]')).toHaveCount(2);
   await expect(page.locator('.nav-project-category').filter({ hasText: '待规划' }).locator('[data-sidebar-project]')).toHaveCount(0);
@@ -53,6 +54,15 @@ test('category names toggle their projects and remember the collapsed state', as
   test.skip(info.project.name === 'mobile', 'Desktop sidebar navigation');
   const original = await prepare(page, true);
   const category = page.locator('[data-category-fold="工作"]'), project = page.locator('[data-sidebar-project="p2"]');
+  const createCategory = page.locator('.nav-group-heading').getByRole('button', { name: '新建项目分类', exact: true });
+  await expect(createCategory).toBeVisible();
+  await expect(page.locator('.nav-project-actions')).toHaveCount(0);
+  const createProject = page.locator('[data-action="new-category-page"][data-section="projects"][data-name="工作"]');
+  expect(await createProject.evaluate(button => getComputedStyle(button).opacity)).toBe('1');
+  await createProject.click();
+  await expect(page.getByRole('dialog', { name: '新建项目', exact: true }).getByLabel('分类（可选）', { exact: true })).toHaveValue('工作');
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(category).toHaveAttribute('aria-expanded', 'true');
   await expect(category).toHaveAttribute('aria-expanded', 'true');
   await category.click(); await expect(category).toHaveAttribute('aria-expanded', 'false');
   await expect(project).toBeHidden();
@@ -62,6 +72,10 @@ test('category names toggle their projects and remember the collapsed state', as
   await expect(project).toBeVisible();
   await page.locator('.sidebar .nav-item[href="#projects"]').click();
   await page.locator('.sidebar .nav-item[href="#projects"]').click();
+  await expect(page.locator('#nav-children-projects')).toBeHidden();
+  await createCategory.click();
+  await expect(page.getByRole('dialog', { name: '新建二级分类', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '取消', exact: true }).click();
   await expect(page.locator('#nav-children-projects')).toBeHidden();
   await page.locator('.sidebar .nav-item[href="#projects"]').click();
   await expect(project).toBeVisible();

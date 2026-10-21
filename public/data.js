@@ -47,19 +47,24 @@ export function validateData(value) {
   if (!value || value.version !== 1 || !Array.isArray(value.projects) || !Array.isArray(value.notes) || !Array.isArray(value.fields)) fail();
   if (value.projects.length > 3000 || value.notes.length > 10000 || value.fields.length > 30) fail();
   const str = (v, max = 20000) => typeof v === 'string' && v.length <= max;
+  const validOrder = record => record.order === undefined || (Number.isSafeInteger(record.order) && record.order >= 0 && record.order <= 100000);
   const ids = new Set();
   for (const p of value.projects) {
     if (!p || !str(p.id, 100) || ids.has(p.id) || !str(p.title, 200) || !p.title.trim() || !str(p.description) || !statuses.some(s => s.id === p.status) || !Object.hasOwn(priorities, p.priority) || !str(p.tag, 60) || !str(p.due, 10) || !Array.isArray(p.tasks) || p.tasks.length > 1000 || typeof p.pinned !== 'boolean' || !p.custom || typeof p.custom !== 'object' || Array.isArray(p.custom)) fail();
     if (p.due && !/^\d{4}-\d{2}-\d{2}$/.test(p.due)) fail();
     ids.add(p.id);
+    if (!validOrder(p)) fail();
+    if (p.archived !== undefined && typeof p.archived !== 'boolean') fail();
     if (p.modules !== undefined && (!Array.isArray(p.modules) || p.modules.length > 100)) fail();
     if (p.ungroupedName !== undefined && (!str(p.ungroupedName, 60) || !p.ungroupedName.trim())) fail();
+    if (p.ungroupedHidden !== undefined && typeof p.ungroupedHidden !== 'boolean') fail();
     const moduleIds = new Set();
     for (const module of p.modules || []) {
       if (!module || !str(module.id, 100) || !module.id || moduleIds.has(module.id) || !str(module.name, 60) || !module.name.trim()) fail();
       moduleIds.add(module.id);
     }
     for (const t of p.tasks) {
+      if (t?.archived !== undefined && typeof t.archived !== 'boolean') fail();
       if (!t || !str(t.id, 100) || !str(t.title, 500) || typeof t.done !== 'boolean') fail();
       if (t.status !== undefined && (!['todo', 'active', 'done'].includes(t.status) || t.done !== (t.status === 'done'))) fail();
       if (t.moduleId !== undefined && (!str(t.moduleId, 100) || (t.moduleId && !moduleIds.has(t.moduleId)))) fail();
@@ -72,6 +77,7 @@ export function validateData(value) {
   for (const n of value.notes) {
     if (!n || !str(n.id, 100) || noteIds.has(n.id) || !str(n.title, 200) || !n.title.trim() || !str(n.body, 200000) || !str(n.summary) || !str(n.category, 100) || !Array.isArray(n.tags) || !n.tags.every(t => str(t, 60)) || !Array.isArray(n.projectIds) || !n.projectIds.every(id => ids.has(id)) || typeof n.inbox !== 'boolean' || !str(n.updatedAt, 50) || Number.isNaN(Date.parse(n.updatedAt))) fail();
     noteIds.add(n.id);
+    if (!validOrder(n)) fail();
     if (n.attachments !== undefined) {
       if (!Array.isArray(n.attachments) || n.attachments.length > 50) fail();
       const attachmentIds = new Set(); let attachmentSize = 0;
@@ -93,8 +99,10 @@ export function validateData(value) {
   for (const folder of value.folders) {
     if (!folder || !str(folder.id, 100) || !folder.id || folderIds.has(folder.id) || !['projects', 'knowledge', 'inbox'].includes(folder.section) || !str(folder.name, 60) || !folder.name.trim() || !str(folder.updatedAt, 50) || Number.isNaN(Date.parse(folder.updatedAt))) fail();
     folderIds.add(folder.id);
+    if (!validOrder(folder)) fail();
+    if (folder.uncategorizedHidden !== undefined && (folder.uncategorizedHidden !== true || folder.name !== '未分类')) fail();
   }
   const prefs = value.preferences;
-  value.preferences = { view: prefs?.view === 'table' ? 'table' : 'board', sort: ['updated', 'title', 'due'].includes(prefs?.sort) ? prefs.sort : 'updated', group: prefs?.group === 'priority' ? 'priority' : 'status' };
+  value.preferences = { view: prefs?.view === 'table' ? 'table' : 'board', sort: ['updated', 'title', 'due', 'manual'].includes(prefs?.sort) ? prefs.sort : 'updated', group: prefs?.group === 'priority' ? 'priority' : 'status' };
   return value;
 }

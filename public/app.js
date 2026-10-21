@@ -1,9 +1,10 @@
+import { orderedRecords, moveRecord, moveCategory, installRecordDrag } from './record-order.js';
 import { installRouteTaskDrag } from './route-task-drag.js';
 import { renderDateInput, installDatePicker } from './date-picker.js';
 import { renderSelect } from './select-control.js';
-import { renderProjectTasks, moduleOptions, taskStates, taskStatus, setTaskStatus, ungroupedName } from './project-tasks.js';
+import { renderProjectTasks, moduleOptions, taskStates, taskStatus, setTaskStatus, ungroupedName, removeModule } from './project-tasks.js';
 import { seedData, validateData, statuses, priorities } from './data.js';
-import { sectionNames, categoryField, categoryRecords, categoryNames, writeCategory, removeCategory } from './categories.js';
+import { sectionNames, categoryField, categoryRecords, categoryNames, writeCategory, removeCategory, navigationCategories, uncategorizedHidden } from './categories.js';
 import { prepare, layout, setLocale } from './vendor/pretext/layout.js';
 import { createSyncClient } from './sync-client.js';
 import { createSyncUI, syncButton } from './sync-ui.js';
@@ -151,39 +152,40 @@ function defaultNoteCategory(inbox) {
   return current.section === section && current.category !== null ? current.category : categoryNames(data, section).includes('产品与设计') ? '产品与设计' : '';
 }
 function filteredProjects() {
-  const result = data.projects.filter(p => categoryMatches(p, 'projects') && (!filters.status || p.status === filters.status) && (!filters.priority || p.priority === filters.priority) && (!filters.tag || p.tag === filters.tag));
+  const result = data.projects.filter(p => !p.archived && categoryMatches(p, 'projects') && (!filters.status || p.status === filters.status) && (!filters.priority || p.priority === filters.priority) && (!filters.tag || p.tag === filters.tag));
+  if (data.preferences.sort === 'manual') return orderedRecords(result);
   return result.sort((a, b) => data.preferences.sort === 'title' ? a.title.localeCompare(b.title, 'zh-CN') : data.preferences.sort === 'due' ? (a.due || '9999').localeCompare(b.due || '9999') : new Date(b.updatedAt) - new Date(a.updatedAt));
 }
 function navItem(section, name, label, count = '') {
   return `<a class="nav-item ${route().section === section ? 'active' : ''}" href="#${section}" ${route().section === section && route().category === null ? 'aria-current="page"' : ''}>${icon(name)}${label}${count !== '' ? `<span class="nav-count">${count}</span>` : ''}</a>`;
 }
 function categoryNav(section, name) {
-  const records = categoryRecords(data, section), field = categoryField(section), label = sectionNames[section];
+  const records = orderedRecords(categoryRecords(data, section).filter(record => section !== 'projects' || !record.archived)), field = categoryField(section), label = sectionNames[section];
   const counts = new Map();
   for (const record of records) counts.set(record[field], (counts.get(record[field]) || 0) + 1);
   const expanded = expandedSections.has(section), current = route();
   if (section === 'projects') return projectNav(name, records, expanded, current);
-  return `<div class="nav-group ${current.section === section ? 'is-current' : ''}"><div class="nav-group-heading">${navItem(section, name, label, records.length)}<button type="button" class="nav-expand" data-nav-expand="${section}" aria-label="${expanded ? '收起' : '展开'}${label}分类" aria-expanded="${expanded}" aria-controls="nav-children-${section}">${icon('down')}</button></div><div class="nav-children" id="nav-children-${section}" ${expanded ? '' : 'hidden'}>${[...categoryNames(data, section), ''].map(category => {
+  const looseLinks = uncategorizedHidden(data, section) ? records.filter(note => !note[field]).map(note => `<a class="nav-note-item ${current.kind === 'note' && current.id === note.id ? 'active' : ''}" href="#${section}/note/${encodeURIComponent(note.id)}" data-sidebar-note="${esc(note.id)}" data-record-drag="record" data-order-id="${esc(note.id)}" data-order-section="${section}" aria-description="可拖动排序或移至其他分类；Alt 加上下排序，左右切换分类" title="${esc(note.title)}" ${current.kind === 'note' && current.id === note.id ? 'aria-current="page"' : ''}>${icon('note')}<span>${esc(note.title)}</span></a>`).join('') : '';
+  return `<div class="nav-group ${current.section === section ? 'is-current' : ''}"><div class="nav-group-heading" data-record-zone data-order-section="${section}" data-order-category="">${navItem(section, name, label, records.length)}<button type="button" class="nav-section-create" data-action="new-category" data-section="${section}" aria-label="新建${label}分类" title="新建分类">${icon('plus')}</button><button type="button" class="nav-expand" data-nav-expand="${section}" aria-label="${expanded ? '收起' : '展开'}${label}分类" aria-expanded="${expanded}" aria-controls="nav-children-${section}">${icon('down')}</button></div><div class="nav-children" id="nav-children-${section}" data-record-zone data-order-section="${section}" data-order-category="" ${expanded ? '' : 'hidden'}>${looseLinks}${navigationCategories(data, section).map(category => {
     const selected = current.section === section && current.category === category;
     const notes = records.filter(note => note[field] === category), open = !collapsedNoteCategories.has(JSON.stringify([section, category]));
-    const listId = `nav-note-list-${section}-${[...categoryNames(data, section), ''].indexOf(category)}`;
-    return `<div class="nav-note-category"><div class="nav-category-row"><button type="button" class="nav-note-fold" data-note-fold="${esc(category)}" data-section="${section}" aria-label="${open ? '收起' : '展开'}${esc(category || '未分类')}文章" aria-expanded="${open}" aria-controls="${listId}">${icon('down')}</button><a class="nav-subitem ${selected ? 'active' : ''}" href="#${esc(categoryPath(section, category))}" ${selected && !current.kind ? 'aria-current="page"' : ''}><span class="nav-category-name" title="${esc(category || '未分类')}">${esc(category || '未分类')}</span><span class="nav-category-count">${counts.get(category) || 0}</span></a><button type="button" class="nav-category-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在${esc(category || '未分类')}下新建页面" title="新建页面">${icon('plus')}</button>${category ? `<button type="button" class="nav-category-edit" data-action="edit-category" data-section="${section}" data-name="${esc(category)}" aria-label="编辑${esc(category)}分类">${icon('more')}</button>` : ''}</div><div id="${listId}" class="nav-note-list" ${open ? '' : 'hidden'}>${notes.map(note => `<a class="nav-note-item ${current.kind === 'note' && current.id === note.id ? 'active' : ''}" href="#${esc(categoryPath(section, category))}/note/${encodeURIComponent(note.id)}" data-sidebar-note="${esc(note.id)}" title="${esc(note.title)}" ${current.kind === 'note' && current.id === note.id ? 'aria-current="page"' : ''}>${icon('note')}<span>${esc(note.title)}</span></a>`).join('')}</div></div>`;
-  }).join('')}<button type="button" class="nav-category-add" data-action="new-category" data-section="${section}">${icon('plus')}新建分类</button></div></div>`;
+    const listId = `nav-note-list-${section}-${navigationCategories(data, section).indexOf(category)}`;
+    return `<div class="nav-note-category" data-order-category="${esc(category)}" data-order-section="${section}" data-record-zone><div class="nav-category-row"><button type="button" class="nav-note-fold" data-note-fold="${esc(category)}" data-section="${section}" aria-label="${open ? '收起' : '展开'}${esc(category || '未分类')}文章" aria-expanded="${open}" aria-controls="${listId}">${icon('down')}</button><a class="nav-subitem ${selected ? 'active' : ''}" href="#${esc(categoryPath(section, category))}" ${category ? `data-record-drag="category" data-order-section="${section}" data-order-id="${esc(category)}" title="拖动分类排序；Alt + 上下方向键排序"` : ''} ${selected && !current.kind ? 'aria-current="page"' : ''}><span class="nav-category-name" title="${esc(category || '未分类')}">${esc(category || '未分类')}</span><span class="nav-category-count">${counts.get(category) || 0}</span></a><button type="button" class="nav-category-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在${esc(category || '未分类')}下新建页面" title="新建页面">${icon('plus')}</button>${category !== null ? `<button type="button" class="nav-category-edit" data-action="edit-category" data-section="${section}" data-name="${esc(category)}" aria-label="编辑${esc(category || '未分类')}分类">${icon('more')}</button>` : ''}</div><div id="${listId}" class="nav-note-list" ${open ? '' : 'hidden'}>${notes.map(note => `<a class="nav-note-item ${current.kind === 'note' && current.id === note.id ? 'active' : ''}" href="#${esc(categoryPath(section, category))}/note/${encodeURIComponent(note.id)}" data-sidebar-note="${esc(note.id)}" data-record-drag="record" data-order-id="${esc(note.id)}" data-order-section="${section}" aria-description="可拖动排序或移至其他分类；Alt 加上下排序，左右切换分类" title="${esc(note.title)}" ${current.kind === 'note' && current.id === note.id ? 'aria-current="page"' : ''}>${icon('note')}<span>${esc(note.title)}</span></a>`).join('')}</div></div>`;
+  }).join('')}</div></div>`;
 }
 function projectNav(name, projects, expanded, current) {
   const projectLinks = (items, category = null) => items.map(project => {
     const selected = current.section === 'projects' && current.kind === 'project' && current.id === project.id;
     const parent = category === null ? 'projects' : categoryPath('projects', category);
-    return `<a class="nav-project ${category === null ? '' : 'is-nested'} ${selected ? 'active' : ''}" data-sidebar-project="${esc(project.id)}" href="#${esc(parent)}/project/${encodeURIComponent(project.id)}" ${selected ? 'aria-current="page"' : ''} title="${esc(project.title)}"><span class="nav-project-dot ${esc(project.status)}" aria-hidden="true"></span><span>${esc(project.title)}</span></a>`;
+    return `<a class="nav-project ${category === null ? '' : 'is-nested'} ${selected ? 'active' : ''}" data-sidebar-project="${esc(project.id)}" data-record-drag="record" data-order-id="${esc(project.id)}" data-order-section="projects" aria-description="可拖动排序或移至其他分类；Alt 加上下排序，左右切换分类" href="#${esc(parent)}/project/${encodeURIComponent(project.id)}" ${selected ? 'aria-current="page"' : ''} title="${esc(project.title)}"><span class="nav-project-dot ${esc(project.status)}" aria-hidden="true"></span><span>${esc(project.title)}</span></a>`;
   }).join('');
-  return `<div class="nav-group ${current.section === 'projects' ? 'is-current' : ''}"><div class="nav-group-heading">${navItem('projects', name, '我的项目', projects.length)}<button type="button" class="nav-expand" data-nav-expand="projects" aria-label="${expanded ? '收起' : '展开'}我的项目分类" aria-expanded="${expanded}" aria-controls="nav-children-projects">${icon('down')}</button></div><div class="nav-children" id="nav-children-projects" ${expanded ? '' : 'hidden'}>
+  return `<div class="nav-group ${current.section === 'projects' ? 'is-current' : ''}"><div class="nav-group-heading" data-record-zone data-order-section="projects" data-order-category="">${navItem('projects', name, '我的项目', projects.length)}<button type="button" class="nav-section-create" data-action="new-category" data-section="projects" aria-label="新建项目分类" title="新建分类">${icon('plus')}</button><button type="button" class="nav-expand" data-nav-expand="projects" aria-label="${expanded ? '收起' : '展开'}我的项目分类" aria-expanded="${expanded}" aria-controls="nav-children-projects">${icon('down')}</button></div><div class="nav-children" id="nav-children-projects" data-record-zone data-order-section="projects" data-order-category="" ${expanded ? '' : 'hidden'}>
     ${projectLinks(projects.filter(project => !project.tag))}
     ${categoryNames(data, 'projects').map((category, index) => {
       const items = projects.filter(project => project.tag === category), selected = current.section === 'projects' && current.category === category;
       const open = !collapsedProjectCategories.has(category), listId = `nav-project-category-items-${index}`;
-      return `<div class="nav-project-category"><div class="nav-category-row"><a class="nav-subitem ${selected ? 'active' : ''}" href="#${esc(categoryPath('projects', category))}" data-category-fold="${esc(category)}" aria-expanded="${open}" aria-controls="${listId}" ${selected && !current.kind ? 'aria-current="page"' : ''}>${icon('down')}<span class="nav-category-name" title="${esc(category)}">${esc(category)}</span><span class="nav-category-count">${items.length}</span></a><button type="button" class="nav-category-create" data-action="new-category-page" data-section="projects" data-name="${esc(category)}" aria-label="在${esc(category)}下新建页面" title="新建项目">${icon('plus')}</button><button type="button" class="nav-category-edit" data-action="edit-category" data-section="projects" data-name="${esc(category)}" aria-label="编辑${esc(category)}分类">${icon('more')}</button></div><div id="${listId}" ${open ? '' : 'hidden'}>${projectLinks(items, category)}</div></div>`;
+      return `<div class="nav-project-category" data-order-category="${esc(category)}" data-order-section="projects" data-record-zone><div class="nav-category-row"><a class="nav-subitem ${selected ? 'active' : ''}" href="#${esc(categoryPath('projects', category))}" data-category-fold="${esc(category)}" data-record-drag="category" data-order-section="projects" data-order-id="${esc(category)}" title="拖动分类排序；Alt + 上下方向键排序" aria-expanded="${open}" aria-controls="${listId}" ${selected && !current.kind ? 'aria-current="page"' : ''}>${icon('down')}<span class="nav-category-name" title="${esc(category)}">${esc(category)}</span><span class="nav-category-count">${items.length}</span></a><button type="button" class="nav-category-create" data-action="new-category-page" data-section="projects" data-name="${esc(category)}" aria-label="在${esc(category)}下新建页面" title="新建项目">${icon('plus')}</button><button type="button" class="nav-category-edit" data-action="edit-category" data-section="projects" data-name="${esc(category)}" aria-label="编辑${esc(category || '未分类')}分类">${icon('more')}</button></div><div id="${listId}" ${open ? '' : 'hidden'}>${projectLinks(items, category)}</div></div>`;
     }).join('')}
-    <div class="nav-project-actions"><button type="button" class="nav-category-add" data-action="new-category-page" data-section="projects" data-name="" aria-label="在未分类下新建页面">${icon('plus')}新建项目</button><button type="button" class="nav-category-add" data-action="new-category" data-section="projects">新建分类</button></div>
   </div></div>`;
 }
 function refreshProjectNavTitle(project) {
@@ -198,10 +200,10 @@ function refreshNoteNavTitle(note) {
 }
 function mobileCategories() {
   const { section, category } = route();
-  return `<div class="mobile-categories"><label for="mobile-category">分类</label><select id="mobile-category" aria-label="二级分类"><option value="${section}" ${category === null ? 'selected' : ''}>全部${section === 'projects' ? '项目' : section === 'inbox' ? '想法' : '笔记'}</option>${[...categoryNames(data, section), ''].map(name => `<option value="${esc(categoryPath(section, name))}" ${category === name ? 'selected' : ''}>${esc(name || '未分类')}</option>`).join('')}</select>${category !== null ? `<button type="button" class="button subtle category-page-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在当前分类下新建页面">${icon('plus')}新建页面</button>` : ''}<button type="button" class="icon-button" data-action="new-category" data-section="${section}" aria-label="新建二级分类">${icon('plus')}</button>${category ? `<button type="button" class="icon-button" data-action="edit-category" data-section="${section}" data-name="${esc(category)}" aria-label="编辑当前分类">${icon('more')}</button>` : ''}</div>`;
+  return `<div class="mobile-categories"><label for="mobile-category">分类</label><select id="mobile-category" aria-label="二级分类"><option value="${section}" ${category === null ? 'selected' : ''}>全部${section === 'projects' ? '项目' : section === 'inbox' ? '想法' : '笔记'}</option>${(section === 'projects' ? [...categoryNames(data, section), ''] : navigationCategories(data, section)).map(name => `<option value="${esc(categoryPath(section, name))}" ${category === name ? 'selected' : ''}>${esc(name || '未分类')}</option>`).join('')}</select>${category !== null ? `<button type="button" class="button subtle category-page-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在当前分类下新建页面">${icon('plus')}新建页面</button>` : ''}<button type="button" class="icon-button" data-action="new-category" data-section="${section}" aria-label="新建二级分类">${icon('plus')}</button>${category !== null ? `<button type="button" class="icon-button" data-action="edit-category" data-section="${section}" data-name="${esc(category)}" aria-label="编辑当前分类">${icon('more')}</button>` : ''}</div>`;
 }
 function sidebar() {
-  const pinned = data.projects.filter(project => project.pinned);
+  const pinned = data.projects.filter(project => project.pinned && !project.archived);
   return `<aside class="sidebar" aria-label="主导航">
     <a class="brand" href="#projects"><span class="brand-mark">${icon('logo')}</span><div><div class="brand-name">拾序</div><div class="brand-en">SHIXU</div></div></a>
     <button class="workspace" data-action="account"><span class="workspace-avatar">我</span><span class="workspace-text"><strong>我的个人空间</strong></span>${icon('down')}</button>
@@ -263,7 +265,7 @@ function routeMarkup(projects) {
   routeState.projectOrder = [...projects.filter(p => !known.has(p.id)).map(p => p.id), ...(routeState.projectOrder || [])];
   const positions = new Map(routeState.projectOrder.map((id, index) => [id, index]));
   const visible = projects.filter(p => routeState.filter === 'all' || (routeState.filter === 'done' ? p.status === 'done' : p.status !== 'done'))
-    .sort((a, b) => positions.get(a.id) - positions.get(b.id));
+    .sort((a, b) => data.preferences.sort === 'manual' ? (a.order ?? 0) - (b.order ?? 0) : positions.get(a.id) - positions.get(b.id));
   if (!visible.some(p => p.id === routeState.selectedProject)) routeState.selectedProject = visible[0]?.id || null;
   return renderRoute({ data: { ...data, projects: visible }, state: routeState, compact: true, esc, icon: (name) => icon(name === 'route' ? 'compass' : name), pct: progress, date: fmtDate, captureForm: routeCapture, recordList: routeRecords });
 }
@@ -313,14 +315,15 @@ function saveRouteCapture(form) {
 function projectsPage() {
   const projects = filteredProjects();
   const isRoute = workspaceView === 'route';
-  const active = data.projects.filter(p => p.status === 'active').length;
-  const finished = data.projects.filter(p => p.status === 'done').length;
+  const active = data.projects.filter(p => !p.archived && p.status === 'active').length;
+  const finished = data.projects.filter(p => !p.archived && p.status === 'done').length;
   const focus = projects.find(p => p.pinned && p.status === 'active');
   const hasFilters = Object.values(filters).some(Boolean);
   return `<section class="page workspace-projects ${isRoute ? 'workspace-route' : ''}">
-    <div class="toolbar"><div class="view-tabs" aria-label="项目视图">${[['route', 'compass', '项目路线图'], ['board', 'board', '看板'], ['table', 'table', '表格']].map(([view, name, label]) => `<button class="view-tab ${workspaceView === view ? 'active' : ''}" data-view="${view}" aria-pressed="${workspaceView === view}">${icon(name)}${label}</button>`).join('')}</div><div class="toolbar-actions"><button class="button subtle ${hasFilters ? 'selected' : ''}" data-action="filter" aria-label="筛选项目">${icon('filter')}<span class="label-desktop">筛选</span>${hasFilters ? '<span>·</span>' : ''}</button><span class="toolbar-rule"></span><select class="toolbar-select" id="sort-select" aria-label="项目排序"><option value="updated" ${data.preferences.sort === 'updated' ? 'selected' : ''}>最近更新</option><option value="due" ${data.preferences.sort === 'due' ? 'selected' : ''}>截止日期</option><option value="title" ${data.preferences.sort === 'title' ? 'selected' : ''}>项目名称</option></select><button class="button primary" data-action="new-project">${icon('plus')}新建项目</button>${!isRoute ? `<button class="button subtle" data-action="view-options" aria-label="视图设置">${icon('more')}</button>` : ''}</div></div>
+    <div class="toolbar"><div class="view-tabs" aria-label="项目视图">${[['route', 'compass', '项目路线图'], ['board', 'board', '看板'], ['table', 'table', '表格']].map(([view, name, label]) => `<button class="view-tab ${workspaceView === view ? 'active' : ''}" data-view="${view}" aria-pressed="${workspaceView === view}">${icon(name)}${label}</button>`).join('')}</div><div class="toolbar-actions"><button class="button subtle ${hasFilters ? 'selected' : ''}" data-action="filter" aria-label="筛选项目">${icon('filter')}<span class="label-desktop">筛选</span>${hasFilters ? '<span>·</span>' : ''}</button><span class="toolbar-rule"></span><select class="toolbar-select" id="sort-select" aria-label="项目排序"><option value="manual" ${data.preferences.sort === 'manual' ? 'selected' : ''}>手动排序</option><option value="updated" ${data.preferences.sort === 'updated' ? 'selected' : ''}>最近更新</option><option value="due" ${data.preferences.sort === 'due' ? 'selected' : ''}>截止日期</option><option value="title" ${data.preferences.sort === 'title' ? 'selected' : ''}>项目名称</option></select><button class="button primary" data-action="new-project">${icon('plus')}新建项目</button>${!isRoute ? `<button class="button subtle" data-action="view-options" aria-label="视图设置">${icon('more')}</button>` : ''}</div></div>
     <h1 class="sr-only">我的项目</h1>
-    <div class="stats-strip">${[['layers', data.projects.length, '全部项目'], ['progress', active, '正在进行'], ['checkCircle', finished, '已经完成'], ['note', data.notes.length, '积累笔记']].map(([name, value, label]) => `<div class="stat"><span class="stat-icon">${icon(name)}</span><div><span class="stat-value"><strong>${value}</strong><span>${label === '积累笔记' ? '篇' : '个'}</span></span><span class="stat-name">${label}</span></div></div>`).join('')}</div>
+    <div class="stats-strip">${[['layers', data.projects.filter(p => !p.archived).length, '全部项目'], ['progress', active, '正在进行'], ['checkCircle', finished, '已经完成'], ['note', data.notes.length, '积累笔记']].map(([name, value, label]) => `<div class="stat"><span class="stat-icon">${icon(name)}</span><div><span class="stat-value"><strong>${value}</strong><span>${label === '积累笔记' ? '篇' : '个'}</span></span><span class="stat-name">${label}</span></div></div>`).join('')}</div>
+    <div class="archive-actions"><button type="button" class="button small subtle" data-action="archive-completed-projects" ${finished ? '' : 'disabled'}>归档已完成项目</button><button type="button" class="button small subtle" data-action="project-archives">已归档项目 ${data.projects.filter(p => p.archived).length}</button></div>
     ${focus ? `<div class="focus-banner"><span class="focus-icon">${icon('compass')}</span><div class="focus-text"><strong>继续上次的进展</strong>${esc(focus.title)}<span> · 还有 ${focus.tasks.filter(t => !t.done).length} 项任务待完成</span></div><button class="button" data-project="${esc(focus.id)}">打开项目${icon('arrow')}</button></div>` : ''}
     ${hasFilters ? `<div class="filter-summary">已筛选 ${projects.length} 个项目<button data-action="clear-filter">清除筛选</button></div>` : ''}
     ${isRoute ? routeMarkup(projects) : !projects.length && hasFilters ? empty('没有符合条件的项目', '换一组筛选条件，或清除筛选查看全部。', 'clear-filter', '清除筛选') : workspaceView === 'board' ? boardMarkup(projects) : projects.length ? tableMarkup(projects) : empty('从第一个项目开始', '写下你正在做的事，进展从这里开始。', 'new-project', '新建项目')}
@@ -330,13 +333,14 @@ function empty(title, text, action, label) {
   return `<div class="empty-state">${icon('layers')}<h3>${title}</h3><p>${text}</p><button class="button" data-action="${action}">${icon('plus')}${label}</button></div>`;
 }
 function noteCard(n) {
-  return `<article class="note-card" tabindex="0" role="button" data-note="${esc(n.id)}" aria-label="打开笔记：${esc(n.title)}">${icon('note')}<h3>${esc(n.title)}</h3><p data-pretext>${esc(n.summary || '暂无内容')}</p><div class="card-tags">${n.tags.map(tag => `<span class="tag">${esc(tag)}</span>`).join('')}</div><div class="card-footer"><span>${icon('link')}${n.projectIds.length ? `${n.projectIds.length} 个关联项目` : '尚未关联项目'}</span><span>${fmtDate(n.updatedAt.slice(0, 10))}</span></div></article>`;
+  const section = n.inbox ? 'inbox' : 'knowledge';
+  return `<article data-order-note="${esc(n.id)}" data-order-section="${section}" class="note-card" tabindex="0" role="button" data-note="${esc(n.id)}" aria-label="打开笔记：${esc(n.title)}"><button type="button" class="record-drag-handle note-record-handle" data-record-drag="record" data-order-id="${esc(n.id)}" data-order-section="${section}" data-order-surface="notes" data-drag-label="${esc(n.title)}" aria-label="拖动笔记：${esc(n.title)}" title="拖动排序，或移至侧栏分类；Alt + 上下方向键排序">${icon('note')}</button><h3>${esc(n.title)}</h3><p data-pretext>${esc(n.summary || '暂无内容')}</p><div class="card-tags">${n.tags.map(tag => `<span class="tag">${esc(tag)}</span>`).join('')}</div><div class="card-footer"><span>${icon('link')}${n.projectIds.length ? `${n.projectIds.length} 个关联项目` : '尚未关联项目'}</span><span>${fmtDate(n.updatedAt.slice(0, 10))}</span></div></article>`;
 }
 function notesPage(inbox) {
   const section = inbox ? 'inbox' : 'knowledge';
-  const notes = categoryRecords(data, section).filter(note => categoryMatches(note, section));
+  const notes = orderedRecords(categoryRecords(data, section).filter(note => categoryMatches(note, section)));
   return `<section class="page"><div class="page-heading"><div><h1>${inbox ? '收集箱' : '知识库'}</h1></div><div class="heading-actions"><button class="button primary" data-action="${inbox ? 'quick-note' : 'new-note'}">${icon('plus')}${inbox ? '快速记录' : '新建笔记'}</button></div></div>
-    ${inbox ? `<div class="inbox-list">${notes.map(noteCard).join('') || empty('想法来了，先记在这里', '无需分类、无需关联项目，一句话也值得记下来。', 'quick-note', '记下第一个想法')}</div>` : `<div class="toolbar"><div class="view-tabs"><span class="view-tab active">${icon('note')}${esc(route().category === null ? '所有笔记' : route().category || '未分类')} <span style="font-size:10px;opacity:.6">${notes.length}</span></span></div><div class="toolbar-actions"><button class="button subtle" data-action="search">${icon('search')}搜索笔记</button></div></div>${notes.length ? `<div class="note-grid">${[...notes].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)).map(noteCard).join('')}</div>` : empty('这里还没有笔记', '记录一次思考，或者从项目中关联一篇笔记。', 'new-note', '新建笔记')}`}
+    ${inbox ? `<div class="inbox-list">${notes.map(noteCard).join('') || empty('想法来了，先记在这里', '无需分类、无需关联项目，一句话也值得记下来。', 'quick-note', '记下第一个想法')}</div>` : `<div class="toolbar"><div class="view-tabs"><span class="view-tab active">${icon('note')}${esc(route().category === null ? '所有笔记' : route().category || '未分类')} <span style="font-size:10px;opacity:.6">${notes.length}</span></span></div><div class="toolbar-actions"><button class="button subtle" data-action="search">${icon('search')}搜索笔记</button></div></div>${notes.length ? `<div class="note-grid">${(notes.some(note => note.order !== undefined) ? orderedRecords(notes) : [...notes].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))).map(noteCard).join('')}</div>` : empty('这里还没有笔记', '记录一次思考，或者从项目中关联一篇笔记。', 'new-note', '新建笔记')}`}
     </section>`;
 }
 function projectDrawer(p) {
@@ -353,7 +357,7 @@ function projectDrawer(p) {
     ${renderProjectTasks(p, { esc, icon, scope: 'detail' })}
     <div class="section-heading">${icon('book')}关联知识<span>${notes.length} 篇</span><button class="button small subtle" data-action="link-notes" data-id="${esc(p.id)}">${icon('link')}关联笔记</button></div>
     ${notes.map(n => `<button class="linked-note" data-note="${esc(n.id)}">${icon('note')}<span class="linked-note-info"><strong>${esc(n.title)}</strong><small>${esc(n.category)}${n.inbox ? ' · 收集箱' : ''}</small></span>${icon('chevron')}</button>`).join('') || '<p class="drawer-muted">关联一篇笔记，让项目和知识连接起来。</p>'}<button class="button small subtle" data-action="project-new-note" data-id="${esc(p.id)}">${icon('plus')}为此项目新建笔记</button>
-    </div><div class="drawer-footer">${icon('shield')}修改自动保存在此浏览器<button class="danger-link" style="margin-left:auto" data-action="delete-project" data-id="${esc(p.id)}">${icon('trash')}删除项目</button></div></aside>`;
+    </div><div class="drawer-footer">${icon('shield')}修改自动保存在此浏览器<button type="button" class="button small subtle" style="margin-left:auto" data-action="${p.archived ? 'restore-project' : 'archive-project'}" data-id="${esc(p.id)}">${p.archived ? '恢复项目' : '归档项目'}</button><button class="danger-link" data-action="delete-project" data-id="${esc(p.id)}">${icon('trash')}删除项目</button></div></aside>`;
 }
 function modalShell(title, body, className = '') {
   return `<section class="modal ${className}" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-header"><h2 id="modal-title" tabindex="-1">${title}</h2><button class="icon-button" data-action="close-modal" aria-label="关闭弹窗">${icon('close')}</button></div><div class="modal-body">${body}</div></section>`;
@@ -368,16 +372,21 @@ function modalMarkup() {
   if (modal.type === 'module') {
     const project = getProject(modal.projectId), module = project?.modules?.find(item => item.id === modal.id);
     if (!project) return '';
-    return modalShell(modal.ungrouped ? '重命名模块' : module ? '编辑模块' : '新建模块', `<form id="module-form"><label class="form-field"><span>模块名称</span><input name="name" maxlength="60" value="${esc(modal.ungrouped ? ungroupedName(project) : module?.name || '')}" placeholder="例如：界面、服务端、测试" required autocomplete="off"></label>${module ? `<button type="button" class="danger-link" data-action="delete-module" data-project-id="${esc(project.id)}" data-id="${esc(module.id)}">删除模块，任务移至${esc(ungroupedName(project))}</button>` : ''}${formActions(module || modal.ungrouped ? '保存修改' : '创建模块')}</form>`);
+    return modalShell(modal.ungrouped ? '重命名模块' : module ? '编辑模块' : '新建模块', `<form id="module-form"><label class="form-field"><span>模块名称</span><input name="name" maxlength="60" value="${esc(modal.ungrouped ? ungroupedName(project) : module?.name || '')}" placeholder="例如：界面、服务端、测试" required autocomplete="off"></label>${module || modal.ungrouped ? `<button type="button" class="danger-link" data-action="delete-module" data-project-id="${esc(project.id)}" data-id="${esc(module?.id || '')}">删除模块，${modal.ungrouped ? (project.modules?.length ? '事项移至首个模块' : '保留事项并取消分组') : `任务移至${esc(ungroupedName(project))}`}</button>` : ''}${formActions(module || modal.ungrouped ? '保存修改' : '创建模块')}</form>`);
+  }
+  if (modal.type === 'project-archives') return modalShell('已归档项目', `<p class="body-copy">保留任务和关联笔记，可随时恢复到项目列表。</p><div class="archive-list">${data.projects.filter(p => p.archived).map(p => `<div class="archive-row"><button type="button" data-project="${esc(p.id)}">${esc(p.title)}</button><button type="button" class="button small" data-action="restore-project" data-id="${esc(p.id)}" aria-label="恢复项目：${esc(p.title)}">恢复</button></div>`).join('') || '<p class="body-copy">暂无归档项目。</p>'}</div>`);
+  if (modal.type === 'task-archives') {
+    const project = getProject(modal.projectId); if (!project) return '';
+    return modalShell('已归档事项', `<p class="body-copy">${esc(project.title)} · 归档事项保留原有状态和模块，恢复后重新显示。</p><div class="archive-list">${project.tasks.filter(task => task.archived).map(task => `<div class="archive-row"><button type="button" data-action="edit-task" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}">${esc(task.title)}<small>${taskStates[taskStatus(task)]}</small></button><button type="button" class="button small" data-action="restore-task" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}" aria-label="恢复事项：${esc(task.title)}">恢复</button></div>`).join('') || '<p class="body-copy">暂无归档事项。</p>'}</div>`);
   }
   if (modal.type === 'task') {
     const project = getProject(modal.projectId), task = project?.tasks.find(item => item.id === modal.id);
     if (!task) return '';
-    const siblings = project.tasks.filter(item => (item.moduleId || '') === (task.moduleId || ''));
-    return modalShell('编辑任务', `<form id="task-edit-form"><label class="form-field"><span>任务名称</span><input name="title" maxlength="500" value="${esc(task.title)}" required autocomplete="off"></label>${selectField('所属模块', 'moduleId', moduleOptions(project), task.moduleId || '')}${selectField('任务状态', 'taskStatus', Object.entries(taskStates), taskStatus(task))}${selectField('排列位置', 'position', siblings.map((item, index) => [String(index), `第 ${index + 1} 项`]), String(siblings.indexOf(task)))}<button type="button" class="danger-link" data-action="delete-task" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}">${icon('trash')}删除任务</button>${formActions('保存修改')}</form>`);
+    const siblings = project.tasks.filter(item => !item.archived && (item.moduleId || '') === (task.moduleId || ''));
+    return modalShell('编辑任务', `<form id="task-edit-form"><label class="form-field"><span>任务名称</span><input name="title" maxlength="500" value="${esc(task.title)}" required autocomplete="off"></label>${selectField('所属模块', 'moduleId', moduleOptions(project), task.moduleId || '')}${selectField('任务状态', 'taskStatus', Object.entries(taskStates), taskStatus(task))}${selectField('排列位置', 'position', siblings.map((item, index) => [String(index), `第 ${index + 1} 项`]), String(siblings.indexOf(task)))}<button type="button" class="button small subtle" data-action="${task.archived ? 'restore-task' : 'archive-task'}" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}">${task.archived ? '恢复事项' : '归档事项'}</button><button type="button" class="danger-link" data-action="delete-task" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}">${icon('trash')}删除任务</button>${formActions('保存修改')}</form>`);
   }
-  if (modal.type === 'category') return modalShell(modal.previousName === null ? '新建二级分类' : '编辑二级分类', `<p class="modal-subtitle">归属位置：${esc(sectionNames[modal.section])}</p><form id="category-form"><label class="form-field"><span>分类名称</span><input name="name" id="create-title" maxlength="60" value="${esc(modal.previousName || '')}" placeholder="例如：工作、学习、生活" required autocomplete="off"></label>${modal.previousName === null ? '' : '<button type="button" class="danger-link category-delete" data-action="delete-category">删除分类</button>'}${formActions(modal.previousName === null ? '创建分类' : '保存修改')}</form>`);
-  if (modal.type === 'confirm-category-delete') return modalShell('删除这个分类？', `<p class="body-copy">删除「${esc(modal.previousName)}」后，其中的项目或笔记会移到“未分类”，内容和关联都会保留。</p><div class="form-actions"><button type="button" class="button" data-action="close-modal">取消</button><button type="button" class="button danger" data-action="confirm-delete-category">删除分类</button></div>`);
+  if (modal.type === 'category') return modalShell(modal.previousName === null ? '新建二级分类' : '编辑二级分类', `<p class="modal-subtitle">归属位置：${esc(sectionNames[modal.section])}</p><form id="category-form"><label class="form-field"><span>分类名称</span><input name="name" id="create-title" maxlength="60" value="${esc(modal.previousName === '' ? '未分类' : modal.previousName || '')}" placeholder="例如：工作、学习、生活" required autocomplete="off"></label>${modal.previousName === null ? '' : '<button type="button" class="danger-link category-delete" data-action="delete-category">删除分类</button>'}${formActions(modal.previousName === null ? '创建分类' : '保存修改')}</form>`);
+  if (modal.type === 'confirm-category-delete') return modalShell('删除这个分类？', `<p class="body-copy">删除「${esc(modal.previousName || '未分类')}」分类后，内容和关联都会保留。${modal.previousName === '' ? '文章直接列在侧栏，不再显示这个分类。' : '其中的项目或笔记将取消分类。'}</p><div class="form-actions"><button type="button" class="button" data-action="close-modal">取消</button><button type="button" class="button danger" data-action="confirm-delete-category">删除分类</button></div>`);
   if (modal.type === 'search') return `<section class="modal search-modal" role="dialog" aria-modal="true" aria-label="搜索全部"><div class="search-input-wrap">${icon('search')}<input class="search-input" id="global-search" autocomplete="off" aria-label="搜索项目、任务和笔记" placeholder="搜索项目、任务和笔记…"><button class="icon-button" data-action="close-modal" aria-label="关闭搜索">${icon('close')}</button></div><div class="search-results" id="search-results">${searchResults('')}</div><div class="search-hint"><kbd>Esc</kbd>关闭搜索<span style="margin-left:auto">只搜索此工作区内容</span></div></section>`;
   if (modal.type === 'new-project') return modalShell('新建项目', `<form id="project-form"><label class="form-field"><span>项目名称</span><input name="title" id="create-title" maxlength="200" placeholder="例如：我的个人网站" required autocomplete="off"></label><label class="form-field"><span>项目说明</span><textarea name="description" maxlength="20000" placeholder="这个项目想完成什么？"></textarea></label><div class="form-row">${selectField('状态', 'status', statuses.map(s => [s.id, s.label]), modal.status || 'planned')}${selectField('优先级', 'priority', Object.entries(priorities), modal.priority || 'medium')}</div><div class="form-row"><label class="form-field"><span>截止日期（可选）</span>${renderDateInput({ esc, icon, id: 'create-project-due', label: '截止日期（可选）', attributes: 'name="due"' })}</label><label class="form-field"><span>分类（可选）</span><input name="tag" maxlength="60" list="project-category-options" value="${esc(modal.category ?? (route().section === 'projects' ? route().category || '' : ''))}" placeholder="如：生活、创作"><datalist id="project-category-options">${categoryNames(data, 'projects').map(name => `<option value="${esc(name)}"></option>`).join('')}</datalist></label></div>${formActions('创建项目')}</form>`);
   if (modal.type === 'new-note') return modalShell(modal.inbox ? '记下一个想法' : '新建笔记', `<form id="note-form"><label class="form-field"><span>标题</span><input name="title" id="create-title" maxlength="200" placeholder="给这个想法起个名字" required autocomplete="off"></label><div class="form-field"><label class="capture-body-label" for="capture-note-body">内容</label><div class="capture-markdown"><div class="capture-mode-bar"><span>Markdown</span><div role="group" aria-label="内容模式"><button type="button" data-capture-mode="edit" aria-pressed="true">编辑</button><button type="button" data-capture-mode="preview" aria-pressed="false">预览</button></div></div>${renderMarkdownTools(icon)}<textarea id="capture-note-body" name="body" rows="8" maxlength="200000" spellcheck="false" placeholder="写下此刻的想法，支持 Markdown…"></textarea><article class="markdown capture-markdown-preview" id="capture-note-preview" aria-label="内容预览" hidden></article></div></div>${selectField('分类', 'category', categoryOptions(modal.inbox ? 'inbox' : 'knowledge'), defaultNoteCategory(Boolean(modal.inbox)))}${formActions(modal.inbox ? '保存到收集箱' : '创建笔记')}</form>`);
@@ -541,8 +550,14 @@ document.addEventListener('click', event => {
     case 'confirm-delete-category': {
       const section = modal.section;
       if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
-      removeCategory(data, section, modal.previousName, new Date().toISOString());
-      save(); modal = null; navigate(categoryPath(section, '')); break;
+      const previous = structuredClone(data);
+      try {
+        removeCategory(data, section, modal.previousName, new Date().toISOString());
+        if (!save()) { data = previous; render(); break; }
+        const destination = modal.previousName === '' ? section : categoryPath(section, '');
+        modal = null; navigate(destination); render();
+      } catch (error) { data = previous; toast(error.message); }
+      break;
     }
     case 'search': showModal('search'); break;
     case 'account': syncUI?.open(); break;
@@ -580,8 +595,7 @@ document.addEventListener('click', event => {
       const p = getProject(target.dataset.projectId);
       if (p) {
         if (saveTaskChange(p, () => {
-          p.modules = (p.modules || []).filter(module => module.id !== target.dataset.id);
-          p.tasks.forEach(task => { if (task.moduleId === target.dataset.id) task.moduleId = ''; });
+          removeModule(p, target.dataset.id);
         })) {
           if (routeModuleTargets.get(p.id) === target.dataset.id) routeModuleTargets.delete(p.id);
           dismissModal();
@@ -591,6 +605,30 @@ document.addEventListener('click', event => {
     }
     case 'delete-task': { const p = getProject(target.dataset.projectId || route().id); if (p && saveTaskChange(p, () => { p.tasks = p.tasks.filter(t => t.id !== target.dataset.id); })) dismissModal(); break; }
     case 'organize-note': { const n = getNote(target.dataset.id); if (n) { n.inbox = false; save(n); render(); toast('已移入知识库，原有关联保持不变。'); } break; }
+    case 'project-archives': showModal('project-archives'); break;
+    case 'task-archives': showModal('task-archives', { projectId: target.dataset.projectId }); break;
+    case 'archive-project': case 'restore-project': case 'archive-completed-projects': {
+      const archived = action !== 'restore-project';
+      const projects = action === 'archive-completed-projects' ? data.projects.filter(p => !p.archived && p.status === 'done') : data.projects.filter(p => p.id === target.dataset.id);
+      if (!projects.length || storageError) break;
+      if (archived && projects.some(p => routeDraft(p.id).trim() || [...moduleTaskDrafts].some(([id, text]) => id.includes(p.id) && text.trim()))) { toast('请先保存或清空这些项目的事项和记录草稿。'); break; }
+      const previous = structuredClone(data);
+      for (const p of projects) { p.archived = archived; p.updatedAt = new Date().toISOString(); }
+      if (!save()) { data = previous; render(); break; }
+      if (modal?.type !== 'project-archives') modal = null;
+      if (route().kind === 'project' && archived && projects.some(p => p.id === route().id)) closeDrawer();
+      render(); toast(archived ? '项目已归档，可在归档列表中恢复。' : '项目已恢复。'); break;
+    }
+    case 'archive-task': case 'restore-task': case 'archive-completed-tasks': {
+      const p = getProject(target.dataset.projectId); if (!p) break;
+      const tasks = action === 'archive-completed-tasks' ? p.tasks.filter(task => !task.archived && task.done) : p.tasks.filter(task => task.id === target.dataset.id);
+      if (!tasks.length) break;
+      if (saveTaskChange(p, () => tasks.forEach(task => { task.archived = action !== 'restore-task'; }))) {
+        if (modal?.type === 'task') modal = null;
+        render(); toast(action === 'restore-task' ? '事项已恢复。' : '事项已归档，可随时恢复。');
+      } else render();
+      break;
+    }
     case 'delete-project': { const p = getProject(target.dataset.id); if (p) showModal('confirm-delete', { kind: 'project', id: p.id, title: p.title }); break; }
     case 'delete-note': { const n = getNote(target.dataset.id); if (n) showModal('confirm-delete', { kind: 'note', id: n.id, title: n.title }); break; }
     case 'confirm-delete': {
@@ -622,7 +660,7 @@ document.addEventListener('submit', event => {
     case 'module-form': {
       const p = getProject(modal.projectId), name = String(values.get('name') || '').trim();
       if (!p || storageError) break;
-      if (!name || (!modal.ungrouped && (name === '未分组' || name === ungroupedName(p))) || (p.modules || []).some(module => module.id !== modal.id && module.name === name)) { $('#form-error').textContent = '请输入不重复的模块名称。'; break; }
+      if (!name || (!modal.ungrouped && name === ungroupedName(p)) || (p.modules || []).some(module => module.id !== modal.id && module.name === name)) { $('#form-error').textContent = '请输入不重复的模块名称。'; break; }
       const module = p.modules?.find(item => item.id === modal.id);
       if (!module && !modal.ungrouped && (p.modules || []).length >= 100) { $('#form-error').textContent = '每个项目最多 100 个模块。'; break; }
       if (saveTaskChange(p, () => {
@@ -638,7 +676,7 @@ document.addEventListener('submit', event => {
         const moved = (task.moduleId || '') !== String(values.get('moduleId') || '');
         task.title = title; task.moduleId = String(values.get('moduleId') || '');
         setTaskStatus(task, values.get('taskStatus'));
-        const siblings = p.tasks.filter(item => item !== task && (item.moduleId || '') === task.moduleId);
+        const siblings = p.tasks.filter(item => item !== task && !item.archived && (item.moduleId || '') === task.moduleId);
         p.tasks = p.tasks.filter(item => item !== task);
         const before = !moved && siblings[Number(values.get('position'))];
         const index = before ? p.tasks.indexOf(before) : siblings.length ? p.tasks.indexOf(siblings.at(-1)) + 1 : p.tasks.length;
@@ -649,8 +687,10 @@ document.addEventListener('submit', event => {
       if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
       try {
         const section = modal.section;
+        const previous = structuredClone(data);
         const folder = writeCategory(data, section, modal.previousName, String(values.get('name') || ''), uid(), new Date().toISOString());
-        save(folder); modal = null; expandedSections.add(section); navigate(categoryPath(section, folder.name));
+        if (!save(folder)) { data = previous; render(); break; }
+        modal = null; expandedSections.add(section); navigate(categoryPath(section, folder.name));
       } catch (error) { $('#form-error').textContent = error.message; }
       break;
     }
@@ -774,6 +814,24 @@ window.addEventListener('storage', event => {
   if (event.key === LAYOUT_KEY) { workspaceView = workspaceViews.includes(event.newValue) ? event.newValue : 'route'; render(); return; }
   if (event.key === KEY && event.newValue !== lastDisk) { storageError = '另一个窗口已更新数据，请先导出当前编辑，再重新加载'; render(); toast(storageError); }
 });
+const recordDrag = installRecordDrag({ announce: toast, canStart: () => !modal && !storageError && !taskDrag.isDragging() && !datePicker.isOpen(), commit(operation) {
+  if (storageError) return false;
+  const previous = structuredClone(data), timestamp = new Date().toISOString();
+  try {
+    const changed = operation.kind === 'category' ? moveCategory(data, operation.section, operation.id, operation.beforeName, timestamp) : moveRecord(data, operation, timestamp);
+    if (!changed) return false;
+    if (!save()) { data = previous; render(); return false; }
+    routeState.projectOrder = null;
+    if (operation.category !== undefined) { collapsedProjectCategories.delete(operation.category); collapsedNoteCategories.delete(JSON.stringify([operation.section, operation.category])); expandedSections.add(operation.section); }
+    const focus = operation.kind === 'category' ? ['category', operation.section, operation.id] : ['record', operation.section, operation.id];
+    render();
+    const surface = operation.visibleIds ? operation.section === 'projects' ? 'home' : 'notes' : 'sidebar';
+    const handle = $$('[data-record-drag]').find(el => el.dataset.recordDrag === focus[0] && el.dataset.orderSection === focus[1] && el.dataset.orderId === focus[2] && (el.dataset.orderSurface || 'sidebar') === surface && el.getClientRects().length);
+    handle?.focus({ preventScroll: true });
+    toast(operation.kind === 'category' ? '分类顺序已保存。' : '顺序与分类已保存。');
+    return true;
+  } catch (error) { data = previous; toast(error.message || '拖动未保存。'); return false; }
+} });
 const taskDrag = installRouteTaskDrag({ getProject, saveTaskChange, render, announce: toast });
 const liveEditor = createLiveNoteEditor({ getNote, notify: toast, onChange(id, body) {
   const note = getNote(id); if (!note) return;
@@ -792,7 +850,7 @@ if (!lastDisk && !storageError) save();
 if (!location.hash) history.replaceState(null, '', '#projects');
 render();
 function canSyncWorkspace() {
-  if (storageError || modal || taskDrag.isDragging() || datePicker.isOpen() || liveEditor.isBusy() || [...moduleTaskDrafts.values()].some(title => title.trim()) || [...routeState.drafts.values()].some(body => body.trim())) return false;
+  if (storageError || modal || taskDrag.isDragging() || recordDrag.isDragging() || datePicker.isOpen() || liveEditor.isBusy() || [...moduleTaskDrafts.values()].some(title => title.trim()) || [...routeState.drafts.values()].some(body => body.trim())) return false;
   const active = document.activeElement;
   if (active?.matches('input,textarea,select,[contenteditable=true]') && !active.closest('#sync-dialog')) return false;
   try { return localStorage.getItem(KEY) === lastDisk; } catch { return false; }
@@ -804,7 +862,9 @@ syncClient = createSyncClient({
   applyData(next) {
     if (!canSyncWorkspace()) return false;
     try {
-      const incoming = validateData(next), serialized = JSON.stringify(incoming);
+      const incoming = validateData(next);
+      if (incoming.projects.some(project => project.order !== undefined && project.order !== getProject(project.id)?.order)) incoming.preferences.sort = 'manual';
+      const serialized = JSON.stringify(incoming);
       localStorage.setItem(KEY, serialized); lastDisk = serialized; data = incoming;
       render(); return true;
     } catch { return false; }

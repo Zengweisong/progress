@@ -14,7 +14,7 @@ test('default group names survive backup and merge without changing task members
   assert.deepEqual(moduleOptions(data.projects[0])[0], ['', '总体']);
   assert.deepEqual(data.projects[0].tasks, remote.projects[0].tasks);
   assert.deepEqual(validateData(JSON.parse(JSON.stringify(data))), data);
-  assert.equal(taskGroups(base.projects[0])[0].name, '未分组');
+  assert.equal(taskGroups(base.projects[0])[0].name, '默认模块');
   for (const name of ['', '  ', 'a'.repeat(61), 42, null]) {
     const invalid = structuredClone(base); invalid.projects[0].ungroupedName = name;
     assert.throws(() => validateData(invalid));

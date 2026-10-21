@@ -1,6 +1,6 @@
 .module-project .mr-line-number svg { width: 16px; height: 16px; }
 .project-modules { min-width: 0; --module-accent: var(--route-color, #2a7769); }
-.module-toolbar { display: flex; justify-content: flex-end; margin: -3px 0 4px; }
+.module-toolbar { display: flex; flex-wrap: wrap; gap: 3px 6px; justify-content: flex-end; margin: -3px 0 4px; }
 .module-toolbar .button { min-height: 28px; padding: 3px 6px; font-size: 11px; color: var(--muted); }
 .module-toolbar .button svg { width: 12px; height: 12px; }
 .module-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }

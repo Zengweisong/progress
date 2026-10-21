@@ -39,7 +39,9 @@ test('checking route tasks updates only their project without moving the routes'
     ['p1', 'p1-t0', false, '80%'],
   ]) {
     await page.locator(`input[data-project-id="${projectId}"][data-task="${taskId}"]`).setChecked(checked);
-    await expect(projectLine(page, projectId).locator('.mr-line-percent')).toHaveText(percent);
+    const project = (await readData(page)).projects.find(p => p.id === projectId);
+    expect(`${Math.round(project.tasks.filter(task => task.done).length / project.tasks.length * 100)}%`).toBe(percent);
+    await expect(projectLine(page, projectId).locator('.mr-line-percent')).toHaveCount(0);
     expect(await order()).toEqual(initialOrder);
     expect(await projectLine(page, 'p1').evaluate(el => el.style.getPropertyValue('--route-color'))).toBe(initialColor);
   }
@@ -82,7 +84,7 @@ test('route completes tasks, adds multiple tasks and saves linked notes in main 
   await page.locator('[data-select-project="p2"]').click();
   const line = projectLine(page, 'p2');
   await line.getByRole('checkbox', { name: '设计文章阅读页', exact: true }).check();
-  await expect(line.locator('.mr-line-percent')).toHaveText('60%');
+  await expect(line.locator('.mr-line-select small')).toContainText('3/5 站完成');
   await page.locator('[data-route-kind="task"]').click();
   await page.locator('#route-capture-body').fill('新增任务一\n新增任务二');
   await page.getByRole('button', { name: '保存记录', exact: true }).click();
@@ -121,11 +123,11 @@ test('clicking a selected route opens centered project details and preserves dra
   await page.keyboard.press('Escape');
   await expect(detail).toHaveCount(0);
   await expect(page.locator('#route-capture-body')).toHaveValue('项目一的草稿');
-  await projectLine(page, 'p2').locator('.mr-line-percent').click();
+  await page.locator('[data-select-project="p2"]').click();
   await expect(page.locator('[data-select-project="p2"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('#route-capture-body')).toHaveValue('');
-  await projectLine(page, 'p2').locator('.mr-line-percent').click();
+  await page.locator('[data-select-project="p2"]').click();
   await expect(page.getByRole('dialog', { name: '项目详情：独立博客改版' })).toBeVisible();
   await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
   await projectLine(page, 'p1').getByRole('checkbox', { name: '梳理知识分类与标签', exact: true }).check();

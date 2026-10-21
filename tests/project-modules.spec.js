@@ -49,8 +49,8 @@ test('custom modules, parallel statuses, task moves and deletions persist withou
   await expect(client.locator('.module-heading')).toContainText('1/2');
   await expect(client.getByRole('combobox', { name: '实现编辑器接口的任务状态', exact: true })).toHaveValue('active');
   await client.getByRole('button', { name: '编辑模块：客户端', exact: true }).click();
-  await page.getByRole('button', { name: '删除模块，任务移至未分组', exact: true }).click();
-  await expect(line(page).getByRole('region', { name: '未分组模块' }).locator('.module-heading')).toContainText('1/5');
+  await page.getByRole('button', { name: '删除模块，任务移至默认模块', exact: true }).click();
+  await expect(line(page).getByRole('region', { name: '默认模块模块' }).locator('.module-heading')).toContainText('1/5');
   await line(page).getByRole('button', { name: '编辑任务：设计编辑器', exact: true }).click();
   await page.getByRole('button', { name: '删除任务', exact: true }).click();
   await expect(line(page).locator('.progress-meta strong')).toHaveText('0%');
@@ -68,7 +68,7 @@ test('task order survives reload and failed writes keep inline drafts without ad
   await page.reload();
   await expect(line(page).locator('.module-task-title').first()).toHaveText('完成第一轮原型');
   const before = await read(page);
-  const input = line(page).getByRole('textbox', { name: '在未分组中添加任务' });
+  const input = line(page).getByRole('textbox', { name: '在默认模块中添加任务' });
   await input.fill('保存失败时的草稿');
   await page.evaluate(key => {
     const original = Storage.prototype.setItem;
@@ -77,7 +77,7 @@ test('task order survives reload and failed writes keep inline drafts without ad
       return original.call(this, name, value);
     };
   }, key);
-  await line(page).getByRole('button', { name: '添加到未分组', exact: true }).click();
+  await line(page).getByRole('button', { name: '添加到默认模块', exact: true }).click();
   await expect(input).toHaveValue('保存失败时的草稿');
   await expect(line(page).locator('.module-task')).toHaveCount(3);
   expect(await read(page)).toEqual(before);
@@ -100,7 +100,7 @@ test('detail and quick capture share modules and keep task input drafts', async 
   await detail.getByRole('combobox', { name: '单元测试的任务状态', exact: true }).selectOption('done');
   await expect(detail.getByRole('region', { name: '测试模块' }).locator('.module-heading')).toContainText('1/2');
   await detail.getByRole('button', { name: '关闭项目详情', exact: true }).click();
-  await expect(page.locator('.mr-line-percent')).toHaveText('20%');
+  await expect(page.locator('.mr-line-select small')).toContainText('1/5 站完成');
   await page.locator('.mr-dock-title').click();
   await expect(input).toHaveValue('还没提交的任务');
   await page.reload();

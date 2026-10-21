@@ -17,8 +17,8 @@ test('project creation, task progress and saved view survive reload', async ({ p
   await page.getByRole('combobox', { name: '状态', exact: true }).selectOption('active');
   await page.getByRole('button', { name: '创建项目', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '项目详情：跨端验证项目' })).toBeVisible();
-  await page.getByRole('textbox', { name: '在未分组中添加任务' }).fill('完成第一个任务');
-  await page.getByRole('button', { name: '添加到未分组', exact: true }).click();
+  await page.getByRole('textbox', { name: '在默认模块中添加任务' }).fill('完成第一个任务');
+  await page.getByRole('button', { name: '添加到默认模块', exact: true }).click();
   await page.getByLabel('完成第一个任务', { exact: true }).check();
   await expect(page.locator('.drawer .progress-meta')).toContainText('100%');
   await page.reload();
@@ -125,6 +125,7 @@ test('capture, organize and search work with keyboard and touch', async ({ page 
   await expect(page.getByRole('region', { name: '笔记编辑器：地铁上的新想法' })).toBeVisible();
   await expect(page.getByRole('button', { name: '移入知识库', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '搜索', exact: true }).focus();
   await page.keyboard.press('Control+k');
   await expect(page.getByRole('dialog', { name: '搜索全部', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');

@@ -13,15 +13,15 @@ test.beforeEach(async ({ page }) => {
 
 test('rename the default group from route and detail, retaining tasks, drafts and selection labels', async ({ page }) => {
   const original = await read(page);
-  const draft = page.getByRole('textbox', { name: '在未分组中添加任务', exact: true });
+  const draft = page.getByRole('textbox', { name: '在默认模块中添加任务', exact: true });
   await draft.fill('尚未提交的事项');
-  await page.getByRole('button', { name: '重命名模块：未分组', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: '模块名称', exact: true })).toHaveValue('未分组');
+  await page.getByRole('button', { name: '重命名模块：默认模块', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '模块名称', exact: true })).toHaveValue('默认模块');
   await page.getByRole('textbox', { name: '模块名称', exact: true }).fill('总体');
   await page.getByRole('button', { name: '保存修改', exact: true }).click();
   await expect(page.getByRole('region', { name: '总体模块线路', exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: '在总体中添加任务', exact: true })).toHaveValue('尚未提交的事项');
-  await expect(page.getByRole('button', { name: '重命名模块：未分组', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '重命名模块：默认模块', exact: true })).toHaveCount(0);
   await page.locator('.mr-dock-title').click();
   const detail = page.locator('.project-detail');
   await expect(detail.getByRole('region', { name: '总体模块', exact: true }).locator('[data-task-row]')).toHaveCount(2);
@@ -44,7 +44,7 @@ test('rename the default group from route and detail, retaining tasks, drafts an
 
 test('duplicate names and failed writes preserve the default group and all its tasks', async ({ page }) => {
   const original = await read(page);
-  await page.getByRole('button', { name: '重命名模块：未分组', exact: true }).click();
+  await page.getByRole('button', { name: '重命名模块：默认模块', exact: true }).click();
   await page.getByRole('textbox', { name: '模块名称', exact: true }).fill('服务端');
   await page.getByRole('button', { name: '保存修改', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('不重复');
@@ -59,5 +59,5 @@ test('duplicate names and failed writes preserve the default group and all its t
   await expect(page.getByRole('textbox', { name: '模块名称', exact: true })).toHaveValue('总体');
   expect(await read(page)).toEqual(original);
   await page.getByRole('button', { name: '取消', exact: true }).click();
-  await expect(page.getByRole('region', { name: '未分组模块线路', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '默认模块模块线路', exact: true })).toBeVisible();
 });
