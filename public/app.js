@@ -13,6 +13,7 @@ import { renderNotePage, renderMarkdownTools, applyMarkdownFormat } from './note
 import { renderMarkdown } from './markdown.js';
 import { createLiveNoteEditor } from './live-note-editor.js';
 import { portableMarkdown } from './note-images.js';
+import { blankNoteTitle, noteTemplates, renderTemplateCards } from './note-templates.js';
 
 const icons = {
   logo: '<path d="M4 4h10v4H8v8h6v4H4zM18 4h3v16h-3zM11 11h9v3h-9z" fill="currentColor" stroke="none"/>',
@@ -151,6 +152,36 @@ function defaultNoteCategory(inbox) {
   const section = inbox ? 'inbox' : 'knowledge', current = route();
   return current.section === section && current.category !== null ? current.category : categoryNames(data, section).includes('产品与设计') ? '产品与设计' : '';
 }
+function noteCreateControl(button, attributes = '', compact = false) {
+  return `<span class="note-create-control ${compact ? 'is-compact' : ''}">${button}<button type="button" class="note-create-toggle" data-action="new-from-template" ${attributes} aria-label="从模板新建" title="从模板新建">${icon('down')}</button><span class="note-create-options"><button type="button" data-action="new-from-template" ${attributes}>${icon('layout')}从模板新建</button></span></span>`;
+}
+function createNotePage(options = {}, template) {
+  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
+  if (data.notes.length >= 10000) { toast('工作区最多支持 10000 篇笔记。'); return; }
+  const section = options.section || 'knowledge', inbox = section === 'inbox';
+  const category = options.category ?? (route().section === section ? route().category || '' : '');
+  const note = { id: uid(), title: template?.title || blankNoteTitle, body: template?.body || '', summary: summarize(template?.body || ''), category, tags: [...(template?.tags || [])], projectIds: options.projectId ? [options.projectId] : [], inbox, updatedAt: new Date().toISOString() };
+  if (template?.attachments) note.attachments = structuredClone(template.attachments);
+  data.notes.unshift(note);
+  if (!save()) { data.notes.shift(); return; }
+  expandedSections.add(section);
+  collapsedNoteCategories.delete(JSON.stringify([section, category]));
+  openNote(note.id, category ? categoryPath(section, category) : section);
+  requestAnimationFrame(() => $('#note-title')?.focus({ preventScroll: true }));
+}
+function applyNoteTemplate(template) {
+  const note = getNote(route().id);
+  if (!note || note.body.trim()) { toast('正文已有内容，请在空白页面中使用模板。'); return; }
+  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
+  const previous = structuredClone(note);
+  if (note.title === blankNoteTitle) note.title = template.title;
+  note.body = template.body; note.summary = summarize(note.body);
+  if (!note.tags.length) note.tags = [...(template.tags || [])];
+  if (template.attachments) note.attachments = structuredClone(template.attachments);
+  if (!save(note)) { Object.keys(note).forEach(key => delete note[key]); Object.assign(note, previous); return; }
+  modal = null; render();
+  $('#note-body')?.focus({ preventScroll: true });
+}
 function filteredProjects() {
   const result = data.projects.filter(p => !p.archived && categoryMatches(p, 'projects') && (!filters.status || p.status === filters.status) && (!filters.priority || p.priority === filters.priority) && (!filters.tag || p.tag === filters.tag));
   if (data.preferences.sort === 'manual') return orderedRecords(result);
@@ -170,7 +201,7 @@ function categoryNav(section, name) {
     const selected = current.section === section && current.category === category;
     const notes = records.filter(note => note[field] === category), open = !collapsedNoteCategories.has(JSON.stringify([section, category]));
     const listId = `nav-note-list-${section}-${navigationCategories(data, section).indexOf(category)}`;
-    return `<div class="nav-note-category" data-order-category="${esc(category)}" data-order-section="${section}" data-record-zone><div class="nav-category-row"><button type="button" class="nav-note-fold" data-note-fold="${esc(category)}" data-section="${section}" aria-label="${open ? '收起' : '展开'}${esc(category || '未分类')}文章" aria-expanded="${open}" aria-controls="${listId}">${icon('down')}</button><a class="nav-subitem ${selected ? 'active' : ''}" href="#${esc(categoryPath(section, category))}" ${category ? `data-record-drag="category" data-order-section="${section}" data-order-id="${esc(category)}" title="拖动分类排序；Alt + 上下方向键排序"` : ''} ${selected && !current.kind ? 'aria-current="page"' : ''}><span class="nav-category-name" title="${esc(category || '未分类')}">${esc(category || '未分类')}</span><span class="nav-category-count">${counts.get(category) || 0}</span></a><button type="button" class="nav-category-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在${esc(category || '未分类')}下新建页面" title="新建页面">${icon('plus')}</button>${category !== null ? `<button type="button" class="nav-category-edit" data-action="edit-category" data-section="${section}" data-name="${esc(category)}" aria-label="编辑${esc(category || '未分类')}分类">${icon('more')}</button>` : ''}</div><div id="${listId}" class="nav-note-list" ${open ? '' : 'hidden'}>${notes.map(note => `<a class="nav-note-item ${current.kind === 'note' && current.id === note.id ? 'active' : ''}" href="#${esc(categoryPath(section, category))}/note/${encodeURIComponent(note.id)}" data-sidebar-note="${esc(note.id)}" data-record-drag="record" data-order-id="${esc(note.id)}" data-order-section="${section}" aria-description="可拖动排序或移至其他分类；Alt 加上下排序，左右切换分类" title="${esc(note.title)}" ${current.kind === 'note' && current.id === note.id ? 'aria-current="page"' : ''}>${icon('note')}<span>${esc(note.title)}</span></a>`).join('')}</div></div>`;
+    return `<div class="nav-note-category" data-order-category="${esc(category)}" data-order-section="${section}" data-record-zone><div class="nav-category-row"><button type="button" class="nav-note-fold" data-note-fold="${esc(category)}" data-section="${section}" aria-label="${open ? '收起' : '展开'}${esc(category || '未分类')}文章" aria-expanded="${open}" aria-controls="${listId}">${icon('down')}</button><a class="nav-subitem ${selected ? 'active' : ''}" href="#${esc(categoryPath(section, category))}" ${category ? `data-record-drag="category" data-order-section="${section}" data-order-id="${esc(category)}" title="拖动分类排序；Alt + 上下方向键排序"` : ''} ${selected && !current.kind ? 'aria-current="page"' : ''}><span class="nav-category-name" title="${esc(category || '未分类')}">${esc(category || '未分类')}</span><span class="nav-category-count">${counts.get(category) || 0}</span></a>${noteCreateControl(`<button type="button" class="nav-category-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在${esc(category || '未分类')}下新建页面" title="新建页面">${icon('plus')}</button>`, `data-section="${section}" data-name="${esc(category)}"`, true)}${category !== null ? `<button type="button" class="nav-category-edit" data-action="edit-category" data-section="${section}" data-name="${esc(category)}" aria-label="编辑${esc(category || '未分类')}分类">${icon('more')}</button>` : ''}</div><div id="${listId}" class="nav-note-list" ${open ? '' : 'hidden'}>${notes.map(note => `<a class="nav-note-item ${current.kind === 'note' && current.id === note.id ? 'active' : ''}" href="#${esc(categoryPath(section, category))}/note/${encodeURIComponent(note.id)}" data-sidebar-note="${esc(note.id)}" data-record-drag="record" data-order-id="${esc(note.id)}" data-order-section="${section}" aria-description="可拖动排序或移至其他分类；Alt 加上下排序，左右切换分类" title="${esc(note.title)}" ${current.kind === 'note' && current.id === note.id ? 'aria-current="page"' : ''}>${icon('note')}<span>${esc(note.title)}</span></a>`).join('')}</div></div>`;
   }).join('')}</div></div>`;
 }
 function projectNav(name, projects, expanded, current) {
@@ -200,7 +231,7 @@ function refreshNoteNavTitle(note) {
 }
 function mobileCategories() {
   const { section, category } = route();
-  return `<div class="mobile-categories"><label for="mobile-category">分类</label><select id="mobile-category" aria-label="二级分类"><option value="${section}" ${category === null ? 'selected' : ''}>全部${section === 'projects' ? '项目' : section === 'inbox' ? '想法' : '笔记'}</option>${(section === 'projects' ? [...categoryNames(data, section), ''] : navigationCategories(data, section)).map(name => `<option value="${esc(categoryPath(section, name))}" ${category === name ? 'selected' : ''}>${esc(name || '未分类')}</option>`).join('')}</select>${category !== null ? `<button type="button" class="button subtle category-page-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在当前分类下新建页面">${icon('plus')}新建页面</button>` : ''}<button type="button" class="icon-button" data-action="new-category" data-section="${section}" aria-label="新建二级分类">${icon('plus')}</button>${category !== null ? `<button type="button" class="icon-button" data-action="edit-category" data-section="${section}" data-name="${esc(category)}" aria-label="编辑当前分类">${icon('more')}</button>` : ''}</div>`;
+  return `<div class="mobile-categories"><label for="mobile-category">分类</label><select id="mobile-category" aria-label="二级分类"><option value="${section}" ${category === null ? 'selected' : ''}>全部${section === 'projects' ? '项目' : section === 'inbox' ? '想法' : '笔记'}</option>${(section === 'projects' ? [...categoryNames(data, section), ''] : navigationCategories(data, section)).map(name => `<option value="${esc(categoryPath(section, name))}" ${category === name ? 'selected' : ''}>${esc(name || '未分类')}</option>`).join('')}</select>${category !== null ? `${section === 'projects' ? `<button type="button" class="button subtle category-page-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在当前分类下新建页面">${icon('plus')}新建页面</button>` : noteCreateControl(`<button type="button" class="button subtle category-page-create" data-action="new-category-page" data-section="${section}" data-name="${esc(category)}" aria-label="在当前分类下新建页面">${icon('plus')}新建页面</button>`, `data-section="${section}" data-name="${esc(category)}"`)}` : ''}<button type="button" class="icon-button" data-action="new-category" data-section="${section}" aria-label="新建二级分类">${icon('plus')}</button>${category !== null ? `<button type="button" class="icon-button" data-action="edit-category" data-section="${section}" data-name="${esc(category)}" aria-label="编辑当前分类">${icon('more')}</button>` : ''}</div>`;
 }
 function sidebar() {
   const pinned = data.projects.filter(project => project.pinned && !project.archived);
@@ -330,7 +361,8 @@ function projectsPage() {
     </section>`;
 }
 function empty(title, text, action, label) {
-  return `<div class="empty-state">${icon('layers')}<h3>${title}</h3><p>${text}</p><button class="button" data-action="${action}">${icon('plus')}${label}</button></div>`;
+  const button = `<button class="button" data-action="${action}">${icon('plus')}${action === 'new-note' ? '新建页面' : label}</button>`;
+  return `<div class="empty-state">${icon('layers')}<h3>${title}</h3><p>${text}</p>${action === 'new-note' ? noteCreateControl(button) : button}</div>`;
 }
 function noteCard(n) {
   const section = n.inbox ? 'inbox' : 'knowledge';
@@ -339,7 +371,7 @@ function noteCard(n) {
 function notesPage(inbox) {
   const section = inbox ? 'inbox' : 'knowledge';
   const notes = orderedRecords(categoryRecords(data, section).filter(note => categoryMatches(note, section)));
-  return `<section class="page"><div class="page-heading"><div><h1>${inbox ? '收集箱' : '知识库'}</h1></div><div class="heading-actions"><button class="button primary" data-action="${inbox ? 'quick-note' : 'new-note'}">${icon('plus')}${inbox ? '快速记录' : '新建笔记'}</button></div></div>
+  return `<section class="page"><div class="page-heading"><div><h1>${inbox ? '收集箱' : '知识库'}</h1></div><div class="heading-actions">${inbox ? `<button class="button primary" data-action="quick-note">${icon('plus')}快速记录</button>` : noteCreateControl(`<button class="button primary" data-action="new-note">${icon('plus')}新建页面</button>`)}</div></div>
     ${inbox ? `<div class="inbox-list">${notes.map(noteCard).join('') || empty('想法来了，先记在这里', '无需分类、无需关联项目，一句话也值得记下来。', 'quick-note', '记下第一个想法')}</div>` : `<div class="toolbar"><div class="view-tabs"><span class="view-tab active">${icon('note')}${esc(route().category === null ? '所有笔记' : route().category || '未分类')} <span style="font-size:10px;opacity:.6">${notes.length}</span></span></div><div class="toolbar-actions"><button class="button subtle" data-action="search">${icon('search')}搜索笔记</button></div></div>${notes.length ? `<div class="note-grid">${(notes.some(note => note.order !== undefined) ? orderedRecords(notes) : [...notes].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))).map(noteCard).join('')}</div>` : empty('这里还没有笔记', '记录一次思考，或者从项目中关联一篇笔记。', 'new-note', '新建笔记')}`}
     </section>`;
 }
@@ -369,6 +401,10 @@ function selectField(label, name, options, value) {
 }
 function modalMarkup() {
   if (!modal) return '';
+  if (modal.type === 'note-templates') {
+    const templates = noteTemplates(data.notes), custom = templates.filter(template => template.key.startsWith('note:'));
+    return modalShell(modal.apply ? '选择页面模板' : '从模板新建', `<p class="modal-subtitle">${modal.apply ? '选择模板，开始这篇空白页面。' : '选择模板，创建一份独立的页面副本。'}</p><h3 class="note-template-heading">常用模板</h3><div class="note-template-grid">${renderTemplateCards(templates.filter(template => template.key.startsWith('builtin:')), esc, 'select-note-template')}</div><h3 class="note-template-heading">我的模板</h3>${custom.length ? `<div class="note-template-grid">${renderTemplateCards(custom, esc, 'select-note-template')}</div>` : '<p class="note-template-empty">在任意页面点击“设为模板”，就能在这里重复使用。</p>'}`);
+  }
   if (modal.type === 'module') {
     const project = getProject(modal.projectId), module = project?.modules?.find(item => item.id === modal.id);
     if (!project) return '';
@@ -448,7 +484,7 @@ function render() {
   const scrollTop = $('.drawer-scroll')?.scrollTop || 0;
   const current = route(), project = current.kind === 'project' && getProject(current.id), note = current.kind === 'note' && getNote(current.id);
   document.title = `拾序 · ${project?.title || note?.title || { projects: '我的项目', knowledge: '知识库', inbox: '收集箱' }[current.section]}`;
-  $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${note ? renderNotePage({ note, esc, icon, categories: ['', ...categoryNames(data, note.inbox ? 'inbox' : 'knowledge')], getProject }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
+  $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${note ? renderNotePage({ note, notes: data.notes, esc, icon, categories: ['', ...categoryNames(data, note.inbox ? 'inbox' : 'knowledge')], getProject }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
   $('#overlay-root').innerHTML = `${project || modal ? '<div class="overlay" data-action="dismiss"></div>' : ''}${project ? projectDrawer(project) : ''}${modalMarkup()}`;
   if (note) liveEditor.mount($('#live-note-editor'), note);
   else liveEditor.destroy();
@@ -469,8 +505,8 @@ function showModal(type, options = {}) {
   requestAnimationFrame(() => { const target = $('.modal input:not([type=checkbox]):not([hidden])') || $('#modal-title') || $('.modal button'); target?.focus(); });
 }
 function dismissModal() {
-  const hadSearch = modal?.type === 'search'; modal = null; importCandidate = null; render();
-  ($('.drawer .icon-button') || $('.note-back') || (hadSearch ? $('.top-actions [data-action=search]') : $('[data-action=new-project]')) || $('.mobile-nav .mobile-create'))?.focus({ preventScroll: true });
+  const hadSearch = modal?.type === 'search', hadTemplates = modal?.type === 'note-templates'; modal = null; importCandidate = null; render();
+  ($('.drawer .icon-button') || (hadTemplates ? $('#note-template-suggestions [data-action=note-template-picker]') || $('.page-heading .note-create-toggle') || $('.note-create-toggle') : null) || $('.note-back') || (hadSearch ? $('.top-actions [data-action=search]') : $('[data-action=new-project]')) || $('.mobile-nav .mobile-create'))?.focus({ preventScroll: true });
 }
 
 document.addEventListener('click', event => {
@@ -542,7 +578,9 @@ document.addEventListener('click', event => {
     case 'insert-note-image': $('#note-image-upload')?.click(); break;
     case 'new-category-page': {
       const section = target.dataset.section;
-      showModal(section === 'projects' ? 'new-project' : 'new-note', { section, category: target.dataset.name, inbox: section === 'inbox' }); break;
+      if (section === 'projects') showModal('new-project', { section, category: target.dataset.name });
+      else createNotePage({ section, category: target.dataset.name });
+      break;
     }
     case 'new-category': showModal('category', { section: target.dataset.section, previousName: null }); break;
     case 'edit-category': showModal('category', { section: target.dataset.section, previousName: target.dataset.name }); break;
@@ -567,9 +605,31 @@ document.addEventListener('click', event => {
       const group = target.dataset.defaultGroup;
       showModal('new-project', data.preferences.group === 'priority' ? { priority: group } : { status: group }); break;
     }
-    case 'new-note': showModal('new-note'); break;
+    case 'new-note': createNotePage(); break;
     case 'quick-note': showModal('new-note', { inbox: true }); break;
-    case 'project-new-note': showModal('new-note', { projectId: target.dataset.id }); break;
+    case 'project-new-note': createNotePage({ projectId: target.dataset.id }); break;
+    case 'new-from-template': showModal('note-templates', { section: target.dataset.section || 'knowledge', category: target.dataset.name ?? (route().section === 'knowledge' ? route().category : null) }); break;
+    case 'note-template-picker': showModal('note-templates', { apply: true }); break;
+    case 'select-note-template': {
+      const template = noteTemplates(data.notes).find(item => item.key === target.dataset.template);
+      if (!template) { toast('这个模板已不可用。'); break; }
+      if (modal?.apply) applyNoteTemplate(template);
+      else createNotePage(modal || {}, template);
+      break;
+    }
+    case 'apply-note-template': {
+      const template = noteTemplates(data.notes).find(item => item.key === target.dataset.template);
+      if (template) applyNoteTemplate(template);
+      break;
+    }
+    case 'toggle-note-template': {
+      const note = getNote(route().id); if (!note || storageError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
+      const previous = structuredClone(note);
+      note.isTemplate = !note.isTemplate;
+      if (!save(note)) { Object.keys(note).forEach(key => delete note[key]); Object.assign(note, previous); break; }
+      render(); $('.note-template-toggle')?.focus({ preventScroll: true });
+      toast(note.isTemplate ? '已设为模板，可从新建入口重复使用。' : '已取消模板。'); break;
+    }
     case 'close-modal': dismissModal(); break;
     case 'dismiss': if (modal) dismissModal(); else closeDrawer(); break;
     case 'close-drawer': closeDrawer(); break;
@@ -730,7 +790,7 @@ document.addEventListener('input', event => {
   if (el.name === 'title') el.setCustomValidity('');
   if (el.id === 'global-search') { $('#search-results').innerHTML = searchResults(el.value); return; }
   if (['title', 'description'].includes(el.dataset.editProject)) { const p = getProject(route().id); if (p && (el.dataset.editProject !== 'title' || el.value.trim())) { p[el.dataset.editProject] = el.value; save(p); document.title = `拾序 · ${p.title}`; if (el.dataset.editProject === 'title') refreshProjectNavTitle(p); } }
-  if (el.dataset.editNote === 'title' && el.value.trim()) { const n = getNote(route().id); if (n) { n.title = el.value; save(n); document.title = `拾序 · ${n.title}`; refreshNoteNavTitle(n); } }
+  if (el.dataset.editNote === 'title') { const n = getNote(route().id); if (n) { n.title = el.value.trim() || blankNoteTitle; save(n); document.title = `拾序 · ${n.title}`; refreshNoteNavTitle(n); } }
 });
 document.addEventListener('change', async event => {
   const el = event.target;
@@ -747,7 +807,7 @@ document.addEventListener('change', async event => {
   if (el.dataset.customField) { const p = getProject(route().id), f = data.fields.find(f => f.id === el.dataset.customField); if (p && f) { p.custom[f.id] = f.type === 'checkbox' ? el.checked : f.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value; save(p); } }
   if (el.dataset.editNote && el.dataset.editNote !== 'body') {
     const n = getNote(route().id), key = el.dataset.editNote;
-    if (n) { if (key === 'title' && !el.value.trim()) { el.value = n.title; toast('笔记标题不能为空。'); return; } n[key] = key === 'tags' ? [...new Set(el.value.split(/[,，]/).map(s => s.trim()).filter(Boolean))].slice(0, 20).map(t => t.slice(0, 60)) : el.value.trim(); save(n); document.title = `拾序 · ${n.title}`; if (key === 'category') render(); }
+    if (n) { n[key] = key === 'tags' ? [...new Set(el.value.split(/[,，]/).map(s => s.trim()).filter(Boolean))].slice(0, 20).map(t => t.slice(0, 60)) : key === 'title' ? el.value.trim() || blankNoteTitle : el.value.trim(); save(n); document.title = `拾序 · ${n.title}`; if (key === 'category') render(); }
   }
   if (el.id === 'import-file' && el.files[0]) {
     try {
@@ -775,9 +835,26 @@ function importData() {
   try { validateData(combined); } catch { toast('导入后会超出原型容量，请减少备份中的记录或属性数量。'); return; }
   data = combined; const saved = save(); importCandidate = null; dismissModal(); if (saved) toast('副本已导入，现有内容已保留。');
 }
+document.addEventListener('mouseover', event => {
+  const control = event.target.closest('.note-create-control');
+  if (control && !control.contains(event.relatedTarget)) control.classList.remove('is-dismissed');
+});
+document.addEventListener('focusout', event => {
+  const control = event.target.closest('.note-create-control');
+  if (control && !control.contains(event.relatedTarget)) control.classList.remove('is-dismissed');
+});
 document.addEventListener('keydown', event => {
   if (event.target.closest('#sync-dialog')) return;
   if (event.isComposing || event.keyCode === 229) return;
+  const createControl = event.target.closest('.note-create-control');
+  if (createControl && event.key === 'ArrowDown') {
+    event.preventDefault(); createControl.classList.remove('is-dismissed');
+    createControl.querySelector('.note-create-options button').focus(); return;
+  }
+  if (createControl && event.key === 'Escape') {
+    event.preventDefault(); createControl.classList.add('is-dismissed');
+    createControl.querySelector('button').focus(); return;
+  }
   if (event.defaultPrevented && event.target.closest('.cm-editor')) return;
   if (event.target.matches('#capture-note-body') && (event.ctrlKey || event.metaKey) && !event.altKey) {
     const action = { b: 'bold', i: 'italic', k: 'link' }[event.key.toLowerCase()];
@@ -836,6 +913,9 @@ const taskDrag = installRouteTaskDrag({ getProject, saveTaskChange, render, anno
 const liveEditor = createLiveNoteEditor({ getNote, notify: toast, onChange(id, body) {
   const note = getNote(id); if (!note) return;
   note.body = body; note.summary = summarize(body); save(note);
+  const empty = !body.trim();
+  $('.note-live-paper')?.classList.toggle('is-empty', empty);
+  if ($('#note-template-suggestions')) $('#note-template-suggestions').hidden = !empty;
   if ($('#note-word-count')) $('#note-word-count').textContent = `${body.replace(/!\[[^\[\]\n]*\]\([^\n)]*\)/g, '').trim().length.toLocaleString('zh-CN')} 字`;
 } });
 const datePicker = installDatePicker({ commit(input, value) {

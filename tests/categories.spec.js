@@ -92,12 +92,18 @@ test('knowledge and inbox categories are independent and default new notes to th
   for (const [section, title] of [['knowledge', '知识分类笔记'], ['inbox', '收集箱分类想法']]) {
     await page.goto(`/#${section}`);
     await createCategory(page, section, '学习资料', mobile);
-    await page.locator('.page-heading .heading-actions button').click();
-    const dialog = page.getByRole('dialog', { name: section === 'inbox' ? '记下一个想法' : '新建笔记', exact: true });
-    await expect(dialog.getByRole('combobox', { name: '分类', exact: true })).toHaveValue('学习资料');
-    await dialog.getByRole('textbox', { name: '标题', exact: true }).fill(title);
-    await dialog.getByRole('textbox', { name: '内容', exact: true }).fill('## 分类中的 Markdown');
-    await dialog.getByRole('button', { name: section === 'inbox' ? '保存到收集箱' : '创建笔记', exact: true }).click();
+    if (section === 'inbox') {
+      await page.locator('.page-heading').getByRole('button', { name: '快速记录', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: '记下一个想法', exact: true });
+      await expect(dialog.getByRole('combobox', { name: '分类', exact: true })).toHaveValue('学习资料');
+      await dialog.getByRole('textbox', { name: '标题', exact: true }).fill(title);
+      await dialog.getByRole('textbox', { name: '内容', exact: true }).fill('## 分类中的 Markdown');
+      await dialog.getByRole('button', { name: '保存到收集箱', exact: true }).click();
+    } else {
+      await page.locator('.page-heading').getByRole('button', { name: '新建页面', exact: true }).click();
+      await page.locator('#note-title').fill(title);
+      await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('## 分类中的 Markdown');
+    }
     await expect(page.locator('#note-category')).toHaveValue('学习资料');
     await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
     await page.reload();
@@ -166,17 +172,22 @@ for (const [section, category, title] of [
     await page.goto(section === 'inbox' ? '/#projects' : '/#inbox');
     const initial = await readData(page), initialURL = page.url();
     await newPageInCategory(page, section, category, mobile);
-    const name = section === 'projects' ? '新建项目' : section === 'inbox' ? '记下一个想法' : '新建笔记';
-    let dialog = page.getByRole('dialog', { name, exact: true });
-    await expect(section === 'projects' ? dialog.getByLabel('分类（可选）', { exact: true }) : dialog.getByRole('combobox', { name: '分类', exact: true })).toHaveValue(category);
-    await dialog.getByRole('button', { name: '取消', exact: true }).click();
-    expect(await readData(page)).toEqual(initial);
-    if (!mobile) expect(page.url()).toBe(initialURL);
-    await newPageInCategory(page, section, category, mobile);
-    dialog = page.getByRole('dialog', { name, exact: true });
-    await dialog.getByRole('textbox', { name: section === 'projects' ? '项目名称' : '标题', exact: true }).fill(title);
-    if (section !== 'projects') await dialog.getByRole('textbox', { name: '内容', exact: true }).fill('## 分类中直接创建\n\n**保留 Markdown**');
-    await dialog.getByRole('button', { name: section === 'projects' ? '创建项目' : section === 'inbox' ? '保存到收集箱' : '创建笔记', exact: true }).click();
+    if (section === 'projects') {
+      let dialog = page.getByRole('dialog', { name: '新建项目', exact: true });
+      await expect(dialog.getByLabel('分类（可选）', { exact: true })).toHaveValue(category);
+      await dialog.getByRole('button', { name: '取消', exact: true }).click();
+      expect(await readData(page)).toEqual(initial);
+      if (!mobile) expect(page.url()).toBe(initialURL);
+      await newPageInCategory(page, section, category, mobile);
+      dialog = page.getByRole('dialog', { name: '新建项目', exact: true });
+      await dialog.getByRole('textbox', { name: '项目名称', exact: true }).fill(title);
+      await dialog.getByRole('button', { name: '创建项目', exact: true }).click();
+    } else {
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await expect(page.locator('#note-category')).toHaveValue(category);
+      await page.locator('#note-title').fill(title);
+      await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('## 分类中直接创建\n\n**保留 Markdown**');
+    }
     const expectedParent = `#${path(section, category)}`;
     await expect.poll(() => decodeURIComponent(page.url().split('#')[1])).toContain(`${section}/category/${category}/${section === 'projects' ? 'project' : 'note'}/`);
     const saved = await readData(page);

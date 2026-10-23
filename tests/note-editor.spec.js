@@ -119,23 +119,20 @@ test('quick ideas support Markdown formatting and safe preview, then save the or
   await expect.poll(() => source(page)).toBe(body);
 });
 
-test('new project notes keep their category and link while switching Markdown modes', async ({ page }) => {
+test('new project notes open directly and keep their category and link while formatting Markdown', async ({ page }) => {
   await page.goto('/#projects/project/p1');
   await page.getByRole('button', { name: '为此项目新建笔记', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '新建笔记', exact: true });
-  await dialog.getByRole('textbox', { name: '标题', exact: true }).fill('项目链接笔记');
-  await dialog.getByRole('combobox', { name: '分类', exact: true }).selectOption('技术实践');
-  const editor = dialog.getByRole('textbox', { name: '内容', exact: true });
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.locator('#note-title').fill('项目链接笔记');
+  await page.locator('#note-category').selectOption('技术实践');
+  const editor = page.getByRole('textbox', { name: '笔记正文', exact: true });
   await editor.fill('参考文档');
   await editor.press('Control+a'); await editor.press('Control+k');
-  await expect(editor).toHaveValue('[参考文档](https://example.com)');
+  await expect(editor).toHaveText('[参考文档](https://example.com)');
   await expect(page.getByRole('dialog', { name: '搜索全部', exact: true })).toHaveCount(0);
-  await dialog.getByRole('button', { name: '预览', exact: true }).click();
-  await expect(dialog.getByRole('link', { name: '参考文档', exact: true })).toHaveAttribute('href', 'https://example.com');
-  await dialog.getByRole('button', { name: '编辑', exact: true }).click();
-  await expect(dialog.getByRole('combobox', { name: '分类', exact: true })).toHaveValue('技术实践');
-  await expect(editor).toHaveValue('[参考文档](https://example.com)');
-  await dialog.getByRole('button', { name: '创建笔记', exact: true }).click();
+  await expect(page.locator('#note-category')).toHaveValue('技术实践');
+  await page.locator('#note-title').focus();
+  await expect(page.locator('.cm-md-link')).toHaveText('参考文档');
   await expect.poll(() => source(page)).toBe('[参考文档](https://example.com)');
   expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: '项目链接笔记', category: '技术实践', inbox: false, projectIds: ['p1'] });
 });
