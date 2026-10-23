@@ -36,7 +36,7 @@ async function editProject(page, title) {
   await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
 }
 async function stored(page, space = 'main') {
-  return page.evaluate(key => JSON.parse(localStorage.getItem(key)), space === 'main' ? 'shixu.workspace.v1' : 'shixu-layout-lab-v1');
+  return page.evaluate(async key => (await import('/workspace-storage.js')).hydrateWorkspace(JSON.parse(localStorage.getItem(key))), space === 'main' ? 'shixu.workspace.v1' : 'shixu-layout-lab-v1');
 }
 async function secondDevice(browser, username) {
   const context = await browser.newContext({ baseURL: 'http://127.0.0.1:4183', locale: 'zh-CN' });
@@ -44,6 +44,44 @@ async function secondDevice(browser, username) {
   await account(page, username);
   return { context, page };
 }
+
+test('image references hydrate on another device and deleted notes can be restored and synced again', async ({ page, browser }) => {
+  const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
+  const other = await secondDevice(browser, username);
+  try {
+    await page.goto('/#knowledge/note/n1');
+    const png = await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = 4; canvas.height = 4;
+      canvas.getContext('2d').fillRect(0, 0, 4, 4); return canvas.toDataURL().split(',')[1];
+    });
+    await page.locator('#note-image-upload').setInputFiles({ name: '同步图片.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+    await expect(page.locator('.cm-note-image img')).toHaveCount(1);
+    const image = (await stored(page)).notes.find(n => n.id === 'n1').attachments[0].data;
+    await sync(page); await sync(other.page);
+    await other.page.goto('/#knowledge/note/n1');
+    await expect(other.page.locator('.cm-note-image img')).toHaveCount(1);
+    expect((await stored(other.page)).notes.find(n => n.id === 'n1').attachments[0].data).toBe(image);
+    expect(await other.page.evaluate(() => JSON.parse(localStorage.getItem('shixu.workspace.v1')).notes.find(n => n.id === 'n1').attachments[0].data)).toBeUndefined();
+    await page.getByRole('button', { name: '删除笔记', exact: true }).click();
+    await page.getByRole('button', { name: '确认删除', exact: true }).click();
+    await expect.poll(async () => (await stored(page)).notes.some(n => n.id === 'n1')).toBe(false);
+    await sync(page); await sync(other.page);
+    expect((await stored(other.page)).notes.some(n => n.id === 'n1')).toBe(false);
+    await page.getByRole('button', { name: '查看本机保存与备份状态', exact: true }).click();
+    await page.getByRole('button', { name: /本机回收站/ }).click();
+    await page.getByRole('button', { name: '恢复：让知识真正流动起来', exact: true }).click();
+    await expect.poll(async () => (await stored(page)).notes.some(n => n.id === 'n1')).toBe(true);
+    await page.getByRole('button', { name: '关闭弹窗', exact: true }).click();
+    await sync(page); await sync(other.page);
+    expect((await stored(other.page)).notes.find(n => n.id === 'n1').attachments[0].data).toBe(image);
+    await other.page.reload(); await expect(other.page.locator('.cm-note-image img')).toHaveCount(1);
+    // Logging out from the lab must hydrate the main workspace before comparing
+    // it with the full sync baseline; local image references are not edits.
+    await other.page.goto('/layouts.html'); await openSync(other.page);
+    await other.page.getByRole('button', { name: '退出账号', exact: true }).click();
+    await expect(dialog(other.page).getByRole('button', { name: '登录账号', exact: true })).toBeVisible();
+  } finally { await other.context.close(); }
+});
 
 test('manual project and category order and note moves sync across devices and survive reload', async ({ page, browser }) => {
   const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
@@ -236,16 +274,16 @@ test('route tasks and linked notes sync across devices while drafts and layouts 
   const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
   const b = await secondDevice(browser, username);
   try {
-    await b.page.locator('[data-view="table"]').click();
+    await b.page.goto('/?layout=table');
     await page.locator('[data-select-project="p1"]').click();
     await page.locator('[data-task="p1-t3"][data-project-id="p1"]').check();
     await page.locator('#route-capture-body').fill('路线图上的同步笔记');
     await editProject(b.page, '另一台设备更新的项目'); await sync(b.page);
-    await page.locator('[data-view="board"]').click();
+    await page.goto('/#knowledge');
     // Pending remote data must not replace the workspace while this view hides a draft.
     await openSync(page); await dialog(page).getByRole('button', { name: '立即同步', exact: true }).click(); await closeSync(page);
     expect((await stored(page)).projects[0].title).toBe('个人知识库 2.0');
-    await page.locator('[data-view="route"]').click();
+    await page.goto('/#projects');
     await expect(page.locator('#route-capture-body')).toHaveValue('路线图上的同步笔记');
     await page.getByRole('button', { name: '保存记录', exact: true }).click();
     await sync(page); await sync(b.page);
@@ -253,8 +291,8 @@ test('route tasks and linked notes sync across devices while drafts and layouts 
     expect(aData.projects.find(p => p.id === 'p1').title).toBe('另一台设备更新的项目');
     expect(bData.projects.find(p => p.id === 'p1').tasks.find(t => t.id === 'p1-t3').done).toBe(true);
     expect(bData.notes.find(n => n.title === '路线图上的同步笔记').projectIds).toEqual(['p1']);
-    await expect(b.page.locator('[data-view="table"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('[data-view="route"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(b.page.locator('.project-table')).toBeVisible();
+    await expect(page.locator('.workspace-route')).toBeVisible();
     const byId = items => [...items].sort((a, b) => a.id.localeCompare(b.id));
     expect({ ...aData, notes: byId(aData.notes), projects: byId(aData.projects) }).toEqual({ ...bData, notes: byId(bData.notes), projects: byId(bData.projects) });
     await page.evaluate(async () => { await navigator.serviceWorker.ready; });

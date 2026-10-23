@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test';
 import { seedData, validateData } from '../public/data.js';
 import { readFile } from 'node:fs/promises';
 const key = 'shixu.workspace.v1';
-const read = page => page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
+const read = page => page.evaluate(async key => {
+  const { hydrateWorkspace } = await import('/workspace-storage.js');
+  return hydrateWorkspace(JSON.parse(localStorage.getItem(key)));
+}, key);
 const body = page => page.getByRole('textbox', { name: '笔记正文', exact: true });
 
 test.beforeEach(async ({ page }) => {
@@ -100,20 +103,20 @@ test('category creation stays in the destination section and templates use that 
     await page.getByRole('button', { name: '在当前分类下新建页面', exact: true }).click();
   } else {
     await page.locator('[data-nav-expand="inbox"]').click();
-    const create = page.locator('[data-action="new-category-page"][data-section="inbox"][data-name="产品与设计"]');
-    await create.locator('..').hover(); await create.click();
+    await page.locator('[data-create-menu="inbox"][data-create-category="产品与设计"]').hover();
+    await page.getByRole('menuitem', { name: '新建页面', exact: true }).click();
   }
   await expect(body(page)).toBeVisible();
-  await expect(page.locator('#note-category')).toHaveValue('产品与设计');
+  expect((await read(page)).notes[0].category).toBe('产品与设计');
   await page.getByRole('button', { name: '使用模板：读书笔记', exact: true }).click();
-  expect((await read(page)).notes[0]).toMatchObject({ title: '读书笔记', inbox: true, category: '产品与设计' });
+  expect((await read(page)).notes[0]).toMatchObject({ title: '读书笔记', inbox: false, favorite: true, category: '产品与设计' });
   await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
-  const control = page.locator(isMobile ? '.mobile-categories .note-create-control' : '.nav-note-category[data-order-section="inbox"][data-order-category="产品与设计"] .note-create-control');
-  if (isMobile) await control.locator('.note-create-toggle').click();
-  else { await control.hover(); await control.locator('.note-create-options button').click(); }
+  const control = page.locator(isMobile ? '.mobile-categories [data-create-menu="inbox"]' : '.sidebar [data-create-menu="inbox"][data-create-category="产品与设计"]');
+  if (isMobile) await control.click(); else await control.hover();
+  await page.getByRole('menuitem', { name: '从模板新建', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: '从模板新建：个人规划', exact: true }).click();
   await expect(body(page)).toContainText('关键步骤');
-  expect((await read(page)).notes[0]).toMatchObject({ title: '个人规划', inbox: true, category: '产品与设计' });
+  expect((await read(page)).notes[0]).toMatchObject({ title: '个人规划', inbox: false, favorite: true, category: '产品与设计' });
 });
 
 test('failed creation does not persist a partial note', async ({ page }) => {

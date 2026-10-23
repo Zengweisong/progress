@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test';
 import { seedData, validateData } from '../public/data.js';
 import { readFile } from 'node:fs/promises';
 const key = 'shixu.workspace.v1';
-const read = page => page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
+const read = page => page.evaluate(async key => {
+  const { hydrateWorkspace } = await import('/workspace-storage.js');
+  return hydrateWorkspace(JSON.parse(localStorage.getItem(key)));
+}, key);
 const note = async page => (await read(page)).notes.find(note => note.id === 'n1');
 const source = async page => (await note(page)).body;
 const editor = page => page.getByRole('textbox', { name: '笔记正文', exact: true });
@@ -39,11 +42,11 @@ test('one live editor presents Markdown and category navigation lists article ti
   expect(errors).toEqual([]);
 });
 
-test('typing, formatting, undo and metadata changes keep Markdown and editor history', async ({ page }) => {
+test('typing, formatting, undo and title changes keep Markdown and editor history', async ({ page }) => {
   await editor(page).fill('重要内容'); await editor(page).press('Control+a');
   await page.getByRole('button', { name: '加粗', exact: true }).click();
   await expect.poll(() => source(page)).toBe('**重要内容**');
-  await page.locator('#note-category').selectOption('技术实践');
+  await expect(page.locator('.note-properties')).toHaveCount(0);
   await editor(page).press('Control+z');
   await expect.poll(() => source(page)).toBe('重要内容');
   await editor(page).press('Control+a'); await editor(page).press('Control+k');

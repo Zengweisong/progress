@@ -74,7 +74,7 @@ test('formatting, keyboard shortcuts and export use Markdown in the single edito
 });
 
 test('live Markdown editor and its bundle work offline', async ({ page, context }) => {
-  await page.goto('/#knowledge/note/n1'); await page.locator('#note-body').fill('# 离线记录\n\n- [x] 本机保存');
+  await page.goto('/#knowledge/note/n1'); await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('# 离线记录\n\n- [x] 本机保存');
   await expect.poll(() => source(page)).toBe('# 离线记录\n\n- [x] 本机保存');
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
   await context.setOffline(true); await page.reload();
@@ -83,56 +83,81 @@ test('live Markdown editor and its bundle work offline', async ({ page, context 
   expect(await source(page)).toBe('# 离线记录\n\n- [x] 本机保存');
 });
 
-test('quick ideas support Markdown formatting and safe preview, then save the original source', async ({ page }) => {
-  await page.goto('/#projects');
-  await page.keyboard.press('n');
-  const dialog = page.getByRole('dialog', { name: '记下一个想法', exact: true });
-  await dialog.getByRole('textbox', { name: '标题', exact: true }).fill('Markdown 想法');
-  const editor = dialog.getByRole('textbox', { name: '内容', exact: true });
-  await editor.fill('重要想法');
-  await editor.press('Control+a');
-  await dialog.getByRole('button', { name: '加粗', exact: true }).click();
-  await expect(editor).toHaveValue('**重要想法**');
-  await editor.fill(body);
-  await dialog.getByRole('button', { name: '预览', exact: true }).click();
-  const preview = dialog.locator('#capture-note-preview');
-  await expect(preview.locator('h1')).toHaveText('Markdown 标题');
-  await expect(preview.locator('strong')).toHaveText('重点');
-  await expect(preview.locator('table')).toContainText('编辑器');
-  await expect(preview.locator('input[type=checkbox]')).toHaveCount(2);
-  await expect(preview.locator('pre code')).toContainText('<script>codeOnly()</script>');
-  await expect(preview.locator('img, script')).toHaveCount(0);
-  await expect(preview.getByText('不安全链接', { exact: true })).not.toHaveAttribute('href');
+test('quick ideas use the same live Markdown editor and save their original source', async ({ page }) => {
+  await page.goto('/#projects'); await page.keyboard.press('n');
+  const draft = page.locator('.note-workspace');
+  await expect(draft.locator('#note-form, .note-properties')).toHaveCount(0);
+  await draft.getByRole('textbox', { name: '笔记标题', exact: true }).fill('Markdown 想法');
+  const editor = draft.getByRole('textbox', { name: '笔记正文', exact: true });
+  await editor.fill('重要想法'); await editor.press('Control+a');
+  await draft.getByRole('button', { name: '加粗', exact: true }).click();
+  await expect(editor).toContainText('重要想法');
+  await editor.fill(body); await page.locator('#note-title').focus();
+  await expect(draft.locator('.cm-md-h1')).toHaveText('Markdown 标题');
+  await expect(draft.locator('.cm-note-table table')).toContainText('编辑器');
   expect(await page.evaluate(() => window.noteInjected)).toBeUndefined();
-  await expect(editor).toBeHidden();
-  await dialog.getByRole('button', { name: '编辑', exact: true }).click();
-  await expect(editor).toHaveValue(body);
-  await expect(dialog.getByRole('textbox', { name: '标题', exact: true })).toHaveValue('Markdown 想法');
-  await dialog.getByRole('button', { name: '预览', exact: true }).click();
-  const bounds = await dialog.boundingBox(), viewport = page.viewportSize();
-  expect(bounds.x).toBeGreaterThanOrEqual(0);
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
-  await dialog.getByRole('button', { name: '保存到收集箱', exact: true }).click();
   await expect.poll(() => source(page)).toBe(body);
-  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: 'Markdown 想法', body, inbox: true });
-  await page.reload();
-  await expect.poll(() => source(page)).toBe(body);
+  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: 'Markdown 想法', body, inbox: false, favorite: false });
+  await page.reload(); await expect.poll(() => source(page)).toBe(body);
 });
 
-test('new project notes open directly and keep their category and link while formatting Markdown', async ({ page }) => {
+test('new project notes preserve their automatic category and project link in the shared editor', async ({ page }) => {
   await page.goto('/#projects/project/p1');
   await page.getByRole('button', { name: '为此项目新建笔记', exact: true }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.locator('#note-title').fill('项目链接笔记');
-  await page.locator('#note-category').selectOption('技术实践');
+  await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('项目链接笔记');
   const editor = page.getByRole('textbox', { name: '笔记正文', exact: true });
-  await editor.fill('参考文档');
-  await editor.press('Control+a'); await editor.press('Control+k');
-  await expect(editor).toHaveText('[参考文档](https://example.com)');
+  await editor.fill('参考文档'); await editor.press('Control+a'); await editor.press('Control+k');
   await expect(page.getByRole('dialog', { name: '搜索全部', exact: true })).toHaveCount(0);
-  await expect(page.locator('#note-category')).toHaveValue('技术实践');
-  await page.locator('#note-title').focus();
-  await expect(page.locator('.cm-md-link')).toHaveText('参考文档');
   await expect.poll(() => source(page)).toBe('[参考文档](https://example.com)');
-  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: '项目链接笔记', category: '技术实践', inbox: false, projectIds: ['p1'] });
+  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: '项目链接笔记', category: '产品与设计', inbox: false, projectIds: ['p1'] });
+});
+
+test('new pages are persisted immediately and retain autosaved edits after closing and reloading', async ({ page }) => {
+  await page.goto('/#knowledge');
+  const before = await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes.length, key);
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
+  await expect(page).toHaveURL(/#knowledge\/note\//);
+  await expect(page.getByRole('region', { name: '笔记编辑器：未命名页面', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('#note-title')).toBeFocused();
+  await expect(page.locator('#note-title')).toHaveValue('');
+  const created = await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes, key);
+  expect(created).toHaveLength(before + 1);
+  expect(created[0]).toMatchObject({ title: '未命名页面', body: '', inbox: false, favorite: false });
+  await expect(page.getByRole('button', { name: '创建笔记', exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('region', { name: '笔记编辑器：未命名页面', exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('整页创建的笔记');
+  await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('保留完整内容');
+  await expect.poll(() => source(page)).toBe('保留完整内容');
+  await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
+  await expect(page).toHaveURL(/#knowledge$/);
+  await expect(page.locator('.note-card').filter({ hasText: '整页创建的笔记' })).toHaveCount(1);
+  await page.reload();
+  await page.locator('.note-card').filter({ hasText: '整页创建的笔记' }).click();
+  await expect.poll(() => source(page)).toBe('保留完整内容');
+  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes.length, key)).toBe(before + 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+});
+
+test('a failed new note save keeps the page and content without inserting a note', async ({ page }) => {
+  await page.goto('/#knowledge/new-note');
+  const before = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
+  await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('保存失败时保留标题');
+  await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('保存失败时保留正文');
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(name, value) {
+      if (name === key) throw new DOMException('No room', 'QuotaExceededError');
+      return original.call(this, name, value);
+    };
+  }, key);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.getByRole('button', { name: '创建笔记', exact: true }).click();
+    await expect(page.locator('#note-create-error')).toContainText('笔记尚未保存');
+    await expect(page).toHaveURL(/#knowledge\/new-note$/);
+    await expect(page.getByRole('textbox', { name: '笔记标题', exact: true })).toHaveValue('保存失败时保留标题');
+    await expect(page.getByRole('textbox', { name: '笔记正文', exact: true })).toHaveText('保存失败时保留正文');
+    expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key)).toEqual(before);
+  }
 });

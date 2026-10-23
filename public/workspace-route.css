@@ -72,9 +72,12 @@
 
 .workspace-projects > .toolbar {
   flex-wrap: wrap;
-  margin-bottom: 30px;
+  border-bottom: 0;
+  margin-bottom: 16px;
   gap: 8px 20px;
 }
+
+.workspace-projects > .toolbar .archive-actions { margin: 0; padding-bottom: 7px; }
 
 .workspace-projects .view-tabs {
   gap: 22px;
@@ -169,6 +172,7 @@
 .workspace-projects .mr-route-heading { display: none; }
 .workspace-projects .mr-line-heading { margin-bottom: 12px; }
 .workspace-projects .mr-stations { padding: 6px; }
+.workspace-projects .mr-station { min-height: 68px; }
 .workspace-projects .mr-module-routes { display: grid; gap: 18px; min-width: 0; }
 .workspace-projects .mr-module-route { min-width: 0; }
 .workspace-projects .mr-module-route + .mr-module-route { border-top: 1px solid var(--line); padding-top: 16px; }
@@ -196,14 +200,12 @@
 .workspace-projects [data-route-task].is-dragging .mr-station-dot { box-shadow: 0 0 0 5px color-mix(in srgb, var(--route-color) 15%, transparent); }
 .workspace-projects [data-route-task].is-dragging .mr-station-title { background: var(--paper, #fff); border-radius: 3px; }
 .workspace-projects .mr-station.is-active .mr-station-dot { background: color-mix(in srgb, var(--route-color) 18%, white); }
-.workspace-projects .mr-station.is-active .mr-station-hint { color: var(--route-color); }
 .workspace-projects .mr-stations > .mr-empty { margin: 0; padding: 6px 0; font-size: 11px; }
 .workspace-projects .mr-station:only-child {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
-  grid-template-rows: auto auto;
+  grid-template-rows: auto;
   column-gap: 10px;
-  row-gap: 4px;
   flex: 0 1 300px;
   width: auto;
   max-width: 300px;
@@ -211,9 +213,8 @@
   padding: 0;
   align-items: center;
 }
-.workspace-projects .mr-station:only-child .mr-station-dot { grid-column: 1; grid-row: 1 / 3; }
+.workspace-projects .mr-station:only-child .mr-station-dot { grid-column: 1; grid-row: 1; }
 .workspace-projects .mr-station:only-child .mr-station-title { grid-column: 2; grid-row: 1; max-width: none; }
-.workspace-projects .mr-station:only-child .mr-station-hint { grid-column: 2; grid-row: 2; }
 
 .workspace-projects .mr-route-heading h1 {
   margin-top: 12px;

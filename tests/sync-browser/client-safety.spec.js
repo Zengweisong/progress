@@ -75,6 +75,21 @@ test.afterEach(async ({ page }) => {
   if (!page.isClosed()) await page.evaluate(() => window.client?.destroy());
 });
 
+test('typing marks pending without reading a complete workspace on each keystroke', async ({ page }) => {
+  await page.goto('/designs.html');
+  const user = await register(page.request), baseline = seedData();
+  await saveRemote(page.request, user, baseline); await mount(page, { user, baseline });
+  const reads = await page.evaluate(() => {
+    let value = window.syncData, reads = 0;
+    Object.defineProperty(window, 'syncData', { configurable: true, get() { reads++; return value; }, set(next) { value = next; } });
+    window.client.localChanged(); window.client.localChanged(); window.client.localChanged();
+    return reads;
+  });
+  expect(reads).toBe(0);
+  await page.evaluate(() => window.client.syncNow());
+  expect(await page.evaluate(() => window.client.getStatus().state)).toBe('synced');
+});
+
 test('an external edit during GET survives even when localChanged was not called', async ({ page }) => {
   await page.goto('/designs.html');
   const user = await register(page.request);
