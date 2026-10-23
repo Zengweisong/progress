@@ -66,7 +66,6 @@ test('note editing, safe Markdown rendering and bidirectional project links', as
   await page.getByRole('button', { name: '为此项目新建笔记', exact: true }).click();
   await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('我的知识验证笔记');
   await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('# 实践笔记\n\n记录一个可复用的方法。');
-  await page.getByRole('button', { name: '创建笔记', exact: true }).click();
   await page.getByRole('textbox', { name: '笔记正文' }).fill('# 实践笔记\n\n- 有价值的经验\n\n<img src=x onerror=alert(1)>');
   await expect(page.locator('.live-note-editor')).toContainText('有价值的经验');
   await expect(page.locator('.live-note-editor img:not(.cm-widgetBuffer)')).toHaveCount(0);
@@ -110,10 +109,9 @@ test('filters, custom properties and card grouping update the same records', asy
 
 test('capture, favorite and search work with keyboard and touch', async ({ page }) => {
   await page.goto('/#inbox');
-  await page.locator('.page-heading').getByRole('button', { name: '新建笔记', exact: true }).click();
+  await page.locator('.page-heading').getByRole('button', { name: '新建页面', exact: true }).click();
   await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('地铁上的新想法');
   await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('为每次项目复盘留下一个可执行的改变。');
-  await page.getByRole('button', { name: '创建笔记', exact: true }).click();
   await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
   await page.getByRole('button', { name: '搜索', exact: true }).click();
   await page.getByRole('textbox', { name: '搜索项目、任务和笔记' }).fill('可执行的改变');

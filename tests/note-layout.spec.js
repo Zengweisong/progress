@@ -20,7 +20,7 @@ test('full width preserves the editor and content, persists and applies to the s
   await expect(page.getByRole('button', { name: '切换为标准宽度', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.screenshot({ path: `.tools/note-layout-${info.project.name}-full.png`, fullPage: true, animations: 'disabled' });
   await page.goto('/#knowledge');
-  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
   await expect(page.locator('.note-workspace')).toHaveClass(/is-full-width/);
   await expect(page.locator('#note-form, .note-properties, .capture-markdown')).toHaveCount(0);
   await expect(page.locator('.note-page-toolbar > .markdown-tools')).toBeVisible();
@@ -32,11 +32,13 @@ test('full width preserves the editor and content, persists and applies to the s
   await expect(page.locator('.note-workspace')).not.toHaveClass(/is-full-width/);
   await editor(page).press('Control+z');
   await expect(editor(page)).toHaveText('保持编辑历史');
-  expect(await read(page)).toEqual(original);
+  await expect.poll(async () => (await read(page)).notes[0].body).toBe('保持编辑历史');
+  const created = await read(page);
+  expect(created.notes).toHaveLength(original.notes.length + 1);
+  expect(created.projects).toEqual(original.projects);
   await page.getByRole('button', { name: '切换为全宽', exact: true }).click();
   await page.screenshot({ path: `.tools/note-layout-${info.project.name}-create.png`, fullPage: true, animations: 'disabled' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-  await page.getByRole('button', { name: '创建笔记', exact: true }).click();
   await expect(page).toHaveURL(/#knowledge\/note\//);
   const saved = (await read(page)).notes[0];
   expect(saved).toMatchObject({ title: '使用详情模板创建', body: '保持编辑历史', inbox: false });
@@ -58,7 +60,11 @@ test('drafts retain live content through overlays and can export without creatin
   expect((await download).suggestedFilename()).toBe('仍是草稿.md');
   expect(await read(page)).toEqual(original);
   await page.getByRole('button', { name: '取消新建笔记', exact: true }).click();
-  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
+  await expect(page).toHaveURL(/#knowledge\/note\//);
   await expect(page.locator('#note-title')).toHaveValue('');
   await expect(editor(page).locator('.cm-placeholder')).toBeVisible();
+  const created = await read(page);
+  expect(created.notes).toHaveLength(original.notes.length + 1);
+  expect(created.notes[0]).toMatchObject({ title: '未命名页面', body: '' });
 });

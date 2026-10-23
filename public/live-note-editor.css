@@ -7,6 +7,8 @@
 .live-note-editor .cm-line { padding: 1px 0; }
 .live-note-editor .cm-md-emptyline { font-size: 10px; line-height: 1.5; min-height: 15px; }
 .live-note-editor .cm-placeholder { color: #a0aba0; }
+.note-live-paper.is-empty .cm-editor { min-height: 190px; }
+.note-live-paper.is-empty .cm-content { min-height: 185px; padding-bottom: 24px; }
 .live-note-editor .cm-cursor { border-left-color: #39796a; }
 .live-note-editor .cm-selectionBackground { background: #dcebdd !important; }
 .live-note-editor .cm-md-heading { color: #27332d; font-weight: 650; line-height: 1.5; padding-block: 14px 7px; }

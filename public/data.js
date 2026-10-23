@@ -79,6 +79,7 @@ export function validateData(value) {
     noteIds.add(n.id);
     if (n.favorite !== undefined && typeof n.favorite !== 'boolean') fail();
     if (!validOrder(n)) fail();
+    if (n.isTemplate !== undefined && typeof n.isTemplate !== 'boolean') fail();
     if (n.attachments !== undefined) {
       if (!Array.isArray(n.attachments) || n.attachments.length > 50) fail();
       const attachmentIds = new Set(); let attachmentSize = 0;

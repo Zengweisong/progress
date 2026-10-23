@@ -18,9 +18,10 @@ test('theme switches without losing drafts, persists on reload and leaves worksp
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.screenshot({ path: `.tools/theme-${info.project.name}-route.png`, fullPage: true, animations: 'disabled' });
   await page.goto('/#knowledge');
-  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
   await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('主题切换时保留标题');
   await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('主题切换时保留正文');
+  const savedBeforeThemeSwitch = await workspace(page);
   await toggle(page).click(); await toggle(page).click();
   await expect(page.getByRole('textbox', { name: '笔记标题', exact: true })).toHaveValue('主题切换时保留标题');
   await expect(page.getByRole('textbox', { name: '笔记正文', exact: true })).toHaveText('主题切换时保留正文');
@@ -29,7 +30,7 @@ test('theme switches without losing drafts, persists on reload and leaves worksp
   await page.reload();
   await expect(theme(page)).toHaveAttribute('data-theme', 'dark');
   await expect(toggle(page)).toHaveAttribute('aria-pressed', 'true');
-  expect(await workspace(page)).toBe(original);
+  expect(await workspace(page)).toBe(savedBeforeThemeSwitch);
   await page.screenshot({ path: `.tools/theme-${info.project.name}-note.png`, fullPage: true, animations: 'disabled' });
   await page.getByRole('button', { name: '搜索', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '搜索全部', exact: true })).toBeVisible();
@@ -65,7 +66,7 @@ test('sidebar shortcuts appear between personal space and workspace and both rem
   await expect(page.getByRole('dialog', { name: '搜索全部', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '关闭搜索', exact: true }).click();
   await sidebar.locator('[data-action="quick-note"]').click();
-  await expect(page).toHaveURL(/#knowledge\/new-note$/);
+  await expect(page).toHaveURL(/#knowledge\/note\//);
 });
 
 test('theme switching remains usable when preference storage fails', async ({ page }) => {

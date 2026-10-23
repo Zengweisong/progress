@@ -1,11 +1,11 @@
-const CACHE = 'shixu-shell-v18';
+const CACHE = 'shixu-shell-v19';
 const SHELL = [
   '/', '/index.html', '/layouts.html', '/designs.html', '/favicon.svg',
   '/app.js', '/data.js', '/styles.css', '/designs.js', '/designs.css',
   '/workspace-route.css', '/project-tasks.js', '/select-control.js', '/project-tasks.css', '/route-task-drag.js', '/record-order.js',
   '/sidebar.js', '/sidebar.css', '/sidebar-create.js',
   '/theme.js', '/theme.css',
-  '/note-editor.js', '/note-editor.css', '/markdown.js', '/categories.js',
+  '/note-templates.js', '/note-editor.js', '/note-editor.css', '/markdown.js', '/categories.js',
   '/live-note-editor.js', '/live-note-editor.css', '/note-images.js', '/vendor/editor/codemirror.js',
   '/workspace-storage.js', '/workspace-search.js', '/recycle-bin.js', '/workspace-tools.css',
   '/date-picker.js', '/date-picker.css',

@@ -85,7 +85,7 @@ test('live Markdown editor and its bundle work offline', async ({ page, context 
 
 test('quick ideas use the same live Markdown editor and save their original source', async ({ page }) => {
   await page.goto('/#projects'); await page.keyboard.press('n');
-  const draft = page.getByRole('region', { name: '新建笔记', exact: true });
+  const draft = page.locator('.note-workspace');
   await expect(draft.locator('#note-form, .note-properties')).toHaveCount(0);
   await draft.getByRole('textbox', { name: '笔记标题', exact: true }).fill('Markdown 想法');
   const editor = draft.getByRole('textbox', { name: '笔记正文', exact: true });
@@ -96,7 +96,6 @@ test('quick ideas use the same live Markdown editor and save their original sour
   await expect(draft.locator('.cm-md-h1')).toHaveText('Markdown 标题');
   await expect(draft.locator('.cm-note-table table')).toContainText('编辑器');
   expect(await page.evaluate(() => window.noteInjected)).toBeUndefined();
-  await draft.getByRole('button', { name: '创建笔记', exact: true }).click();
   await expect.poll(() => source(page)).toBe(body);
   expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: 'Markdown 想法', body, inbox: false, favorite: false });
   await page.reload(); await expect.poll(() => source(page)).toBe(body);
@@ -109,33 +108,35 @@ test('new project notes preserve their automatic category and project link in th
   const editor = page.getByRole('textbox', { name: '笔记正文', exact: true });
   await editor.fill('参考文档'); await editor.press('Control+a'); await editor.press('Control+k');
   await expect(page.getByRole('dialog', { name: '搜索全部', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: '创建笔记', exact: true }).click();
   await expect.poll(() => source(page)).toBe('[参考文档](https://example.com)');
   expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes[0], key)).toMatchObject({ title: '项目链接笔记', category: '产品与设计', inbox: false, projectIds: ['p1'] });
 });
 
-test('new notes open on their own page, cancel without creating a record and return after saving', async ({ page }) => {
+test('new pages are persisted immediately and retain autosaved edits after closing and reloading', async ({ page }) => {
   await page.goto('/#knowledge');
   const before = await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes.length, key);
-  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
-  await expect(page).toHaveURL(/#knowledge\/new-note$/);
-  await expect(page.getByRole('region', { name: '新建笔记', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
+  await expect(page).toHaveURL(/#knowledge\/note\//);
+  await expect(page.getByRole('region', { name: '笔记编辑器：未命名页面', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('#note-title')).toBeFocused();
-  await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('先取消的草稿');
-  await page.getByRole('button', { name: '取消', exact: true }).click();
-  await expect(page).toHaveURL(/#knowledge$/);
-  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes.length, key)).toBe(before);
-  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  await expect(page.locator('#note-title')).toHaveValue('');
+  const created = await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes, key);
+  expect(created).toHaveLength(before + 1);
+  expect(created[0]).toMatchObject({ title: '未命名页面', body: '', inbox: false, favorite: false });
+  await expect(page.getByRole('button', { name: '创建笔记', exact: true })).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole('region', { name: '新建笔记', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '笔记编辑器：未命名页面', exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill('整页创建的笔记');
   await page.getByRole('textbox', { name: '笔记正文', exact: true }).fill('保留完整内容');
-  await page.getByRole('button', { name: '创建笔记', exact: true }).click();
   await expect.poll(() => source(page)).toBe('保留完整内容');
-  await page.goBack();
+  await page.getByRole('button', { name: '关闭笔记', exact: true }).click();
   await expect(page).toHaveURL(/#knowledge$/);
   await expect(page.locator('.note-card').filter({ hasText: '整页创建的笔记' })).toHaveCount(1);
+  await page.reload();
+  await page.locator('.note-card').filter({ hasText: '整页创建的笔记' }).click();
+  await expect.poll(() => source(page)).toBe('保留完整内容');
+  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).notes.length, key)).toBe(before + 1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
 

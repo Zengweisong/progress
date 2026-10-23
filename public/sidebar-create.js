@@ -3,10 +3,11 @@ export function installSidebarCreateMenu({ icon }) {
   menu.id = 'sidebar-create-menu'; menu.className = 'sidebar-create-menu';
   menu.setAttribute('popover', 'auto'); menu.setAttribute('role', 'menu');
   menu.setAttribute('aria-label', '新建内容');
-  menu.innerHTML = `<button type="button" role="menuitem" data-action="new-category">${icon('layers')}<span>新建分类</span></button><button type="button" role="menuitem" data-action="new-section-page">${icon('note')}<span>新建页面</span></button>`;
+  menu.innerHTML = `<button type="button" role="menuitem" data-action="new-category">${icon('layers')}<span>新建分类</span></button><button type="button" role="menuitem" data-action="new-section-page">${icon('note')}<span>新建页面</span></button><button type="button" role="menuitem" data-action="new-from-template">${icon('layout')}<span>从模板新建</span></button>`;
   document.body.append(menu);
   let trigger = null, closeTimer;
   const items = [...menu.querySelectorAll('[role=menuitem]')];
+  const visibleItems = () => items.filter(item => !item.hidden);
   const contains = target => target instanceof Node && (menu.contains(target) || trigger?.contains(target));
   const cancelClose = () => clearTimeout(closeTimer);
   function close() {
@@ -22,6 +23,7 @@ export function installSidebarCreateMenu({ icon }) {
       if (button.hasAttribute('data-create-category')) item.dataset.name = button.dataset.createCategory;
       else delete item.dataset.name;
     }
+    items[2].hidden = button.dataset.createMenu === 'projects';
     items[1].dataset.action = button.hasAttribute('data-create-category') ? 'new-category-page' : 'new-section-page';
     button.setAttribute('aria-expanded', 'true');
     if (!menu.matches(':popover-open')) menu.showPopover();
@@ -54,7 +56,7 @@ export function installSidebarCreateMenu({ icon }) {
     const button = event.target.closest('[data-create-menu]');
     if (button && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
       event.preventDefault(); event.stopPropagation(); open(button, true);
-      if (event.key === 'ArrowUp') items.at(-1).focus();
+      if (event.key === 'ArrowUp') visibleItems().at(-1).focus();
       return;
     }
     if (!trigger) return;
@@ -64,8 +66,8 @@ export function installSidebarCreateMenu({ icon }) {
     if (!menu.contains(event.target)) return;
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
       event.preventDefault(); event.stopPropagation();
-      const index = items.indexOf(document.activeElement);
-      items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+      const available = visibleItems(), index = available.indexOf(document.activeElement);
+      available[event.key === 'Home' ? 0 : event.key === 'End' ? available.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + available.length) % available.length].focus();
     } else if (event.key === 'Tab') close();
   }, true);
   document.addEventListener('focusin', event => { if (trigger && !contains(event.target)) close(); });

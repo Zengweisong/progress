@@ -14,6 +14,7 @@ import { renderRoute } from './layouts-matrix-route.js';
 import { renderNotePage } from './note-editor.js';
 import { createLiveNoteEditor } from './live-note-editor.js';
 import { portableMarkdown } from './note-images.js';
+import { blankNoteTitle, noteTemplates, renderTemplateCards } from './note-templates.js';
 import { hydrateWorkspace, persistAttachments, serializeWorkspace, WORKSPACE_BYTES } from './workspace-storage.js';
 import { archiveWorkspace, getTrashEntries, getRecoveryEntry, deleteRecovery, getSyncMeta } from './sync-db.js';
 import { deletedRecord, removeRecord, restoreRecord } from './recycle-bin.js';
@@ -79,7 +80,7 @@ const LAYOUT_KEY = 'shixu.workspace.layout.v1';
 const workspaceViews = ['route', 'board', 'table'];
 let workspaceView = 'route';
 const NOTE_LAYOUT_KEY = 'shixu.note.layout.v1';
-let noteFullWidth = false, noteCreation = null;
+let noteFullWidth = false, noteCreation = null, pendingNoteFocus = null;
 try { noteFullWidth = localStorage.getItem(NOTE_LAYOUT_KEY) === 'full'; } catch { /* Use the standard document width. */ }
 try { const savedView = localStorage.getItem(LAYOUT_KEY); if (workspaceViews.includes(savedView)) workspaceView = savedView; } catch { /* The current view still works without browser storage. */ }
 const entryURL = new URL(location.href), requestedView = entryURL.searchParams.get('layout');
@@ -235,17 +236,44 @@ function sectionPath() { const current = route(); return current.category === nu
 function navigate(section) { if (location.hash === `#${section}`) render(); else location.hash = section; }
 function openProject(id, parent = sectionPath()) { modal = null; navigate(`${parent}/project/${encodeURIComponent(id)}`); }
 function openNote(id, parent = sectionPath()) { modal = null; navigate(`${parent}/note/${encodeURIComponent(id)}`); }
-function openNoteCreate({ section = 'knowledge', category, projectId } = {}) {
-  if (projectId) section = route().section;
-  const parent = category !== undefined ? categoryPath(section, category) : route().section === section ? sectionPath() : section;
-  modal = null; navigate(`${parent}/new-note${projectId ? `/${encodeURIComponent(projectId)}` : ''}`);
-}
+function openNoteCreate(options = {}) { createNotePage(options); }
 function closeDrawer() { navigate(sectionPath()); }
 function categoryMatches(record, section) { const current = route(); return current.section !== section || current.category === null || record[categoryField(section)] === current.category; }
 function categoryOptions(section) { return [['', '未分类'], ...categoryNames(data, section).map(name => [name, name])]; }
 function defaultNoteCategory(inbox) {
   const section = inbox ? 'inbox' : 'knowledge', current = route();
   return current.section === section && current.category !== null ? current.category : categoryNames(data, section).includes('产品与设计') ? '产品与设计' : '';
+}
+function noteCreateControl(button, attributes = '', compact = false) {
+  return `<span class="note-create-control ${compact ? 'is-compact' : ''}">${button}<button type="button" class="note-create-toggle" data-action="new-from-template" ${attributes} aria-label="从模板新建" title="从模板新建">${icon('down')}</button><span class="note-create-options"><button type="button" data-action="new-from-template" ${attributes}>${icon('layout')}从模板新建</button></span></span>`;
+}
+function createNotePage(options = {}, template) {
+  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
+  if (data.notes.length >= 10000) { toast('工作区最多支持 10000 篇笔记。'); return; }
+  const section = options.section || 'knowledge', favorite = section === 'inbox';
+  const category = options.category ?? defaultNoteCategory(favorite);
+  const note = { id: uid(), title: template?.title || blankNoteTitle, body: template?.body || '', summary: summarize(template?.body || ''), category, tags: [...(template?.tags || [])], projectIds: options.projectId ? [options.projectId] : [], inbox: false, favorite, updatedAt: new Date().toISOString() };
+  if (template?.attachments) note.attachments = structuredClone(template.attachments);
+  data.notes.unshift(note);
+  if (!save()) { data.notes.shift(); return; }
+  expandedSections.add(section);
+  collapsedNoteCategories.delete(JSON.stringify([section, category]));
+  const parent = options.projectId ? sectionPath() : options.category !== undefined ? categoryPath(section, category) : route().section === section ? sectionPath() : section;
+  pendingNoteFocus = note.id;
+  openNote(note.id, parent);
+}
+function applyNoteTemplate(template) {
+  const note = currentNote();
+  if (!note || note.body.trim()) { toast('正文已有内容，请在空白页面中使用模板。'); return; }
+  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
+  const previous = structuredClone(note);
+  if (note.title === blankNoteTitle) note.title = template.title;
+  note.body = template.body; note.summary = summarize(note.body);
+  if (!note.tags.length) note.tags = [...(template.tags || [])];
+  if (template.attachments) note.attachments = structuredClone(template.attachments);
+  if (!save(note)) { Object.keys(note).forEach(key => delete note[key]); Object.assign(note, previous); return; }
+  modal = null; render();
+  $('#note-body')?.focus({ preventScroll: true });
 }
 function filteredProjects() {
   const result = data.projects.filter(p => !p.archived && categoryMatches(p, 'projects') && (!filters.status || p.status === filters.status) && (!filters.priority || p.priority === filters.priority) && (!filters.tag || p.tag === filters.tag));
@@ -431,7 +459,8 @@ function projectsPage() {
     </section>`;
 }
 function empty(title, text, action, label) {
-  return `<div class="empty-state">${icon('layers')}<h3>${title}</h3><p>${text}</p><button class="button" data-action="${action}">${icon('plus')}${label}</button></div>`;
+  const button = `<button class="button" data-action="${action}">${icon('plus')}${action === 'new-note' ? '新建页面' : label}</button>`;
+  return `<div class="empty-state">${icon('layers')}<h3>${title}</h3><p>${text}</p>${action === 'new-note' ? noteCreateControl(button) : button}</div>`;
 }
 function newNotePage() {
   if (noteCreation?.path !== location.hash) {
@@ -469,7 +498,7 @@ function notesPage(favorites) {
   const section = favorites ? 'inbox' : 'knowledge';
   const notes = orderedRecords(categoryRecords(data, section).filter(note => categoryMatches(note, section)));
   const listed = notes.some(note => note.order !== undefined) ? notes : [...notes].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-  return `<section class="page"><div class="page-heading"><div><h1>${sectionNames[section]}</h1></div><div class="heading-actions"><button class="button primary" data-action="new-note">${icon('plus')}新建笔记</button></div></div>
+  return `<section class="page"><div class="page-heading"><div><h1>${sectionNames[section]}</h1></div><div class="heading-actions">${noteCreateControl(`<button class="button primary" data-action="new-note">${icon('plus')}新建页面</button>`, `data-section="${section}"`)}</div></div>
     <div class="toolbar"><div class="view-tabs"><span class="view-tab active">${icon(favorites ? 'star' : 'note')}${esc(route().category === null ? favorites ? '全部收藏' : '所有笔记' : route().category || '未分类')} <span style="font-size:10px;opacity:.6">${notes.length}</span></span></div><div class="toolbar-actions"><button class="button subtle" data-action="search">${icon('search')}搜索笔记</button></div></div>
     ${notes.length ? `<div class="note-grid">${listed.map(noteCard).join('')}</div>` : favorites ? '<div class="empty-state"><h3>还没有收藏的笔记</h3><p>在笔记页点亮星星，喜欢的内容就会出现在这里。</p><a class="button" href="#knowledge">浏览知识库</a></div>' : empty('这里还没有笔记', '记录一次思考，或者从项目中关联一篇笔记。', 'new-note', '新建笔记')}
     </section>`;
@@ -500,6 +529,10 @@ function selectField(label, name, options, value) {
 }
 function modalMarkup() {
   if (!modal) return '';
+  if (modal.type === 'note-templates') {
+    const templates = noteTemplates(data.notes), custom = templates.filter(template => template.key.startsWith('note:'));
+    return modalShell(modal.apply ? '选择页面模板' : '从模板新建', `<p class="modal-subtitle">${modal.apply ? '选择模板，开始这篇空白页面。' : '选择模板，创建一份独立的页面副本。'}</p><h3 class="note-template-heading">常用模板</h3><div class="note-template-grid">${renderTemplateCards(templates.filter(template => template.key.startsWith('builtin:')), esc, 'select-note-template')}</div><h3 class="note-template-heading">我的模板</h3>${custom.length ? `<div class="note-template-grid">${renderTemplateCards(custom, esc, 'select-note-template')}</div>` : '<p class="note-template-empty">在任意页面点击“设为模板”，就能在这里重复使用。</p>'}`);
+  }
   if (modal.type === 'module') {
     const project = getProject(modal.projectId), module = project?.modules?.find(item => item.id === modal.id);
     if (!project) return '';
@@ -598,7 +631,7 @@ function render() {
   const current = route(), project = current.kind === 'project' && getProject(current.id), note = current.kind === 'note' && getNote(current.id);
   rememberRecent(current);
   document.title = `拾序 · ${project?.title || note?.title || { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹' }[current.section]}`;
-  $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${current.kind === 'new-note' ? newNotePage() : note ? renderNotePage({ note, esc, icon, fullWidth: noteFullWidth }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
+  $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${current.kind === 'new-note' ? newNotePage() : note ? renderNotePage({ note, notes: data.notes, esc, icon, fullWidth: noteFullWidth }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
   sidebarControls.refresh();
   $('#overlay-root').innerHTML = `${project || modal ? '<div class="overlay" data-action="dismiss"></div>' : ''}${project ? projectDrawer(project) : ''}${modalMarkup()}`;
   const editorNote = note || (current.kind === 'new-note' ? noteCreation?.note : null);
@@ -753,6 +786,28 @@ document.addEventListener('click', async event => {
     case 'quick-note': openNoteCreate(); break;
     case 'project-new-note': openNoteCreate({ projectId: target.dataset.id }); break;
     case 'cancel-note-create': { const projectId = route().id; noteCreation = null; if (getProject(projectId)) openProject(projectId); else closeDrawer(); break; }
+    case 'new-from-template': showModal('note-templates', { section: target.dataset.section || 'knowledge', category: target.dataset.name }); break;
+    case 'note-template-picker': showModal('note-templates', { apply: true }); break;
+    case 'select-note-template': {
+      const template = noteTemplates(data.notes).find(item => item.key === target.dataset.template);
+      if (!template) { toast('这个模板已不可用。'); break; }
+      if (modal?.apply) applyNoteTemplate(template);
+      else createNotePage(modal || {}, template);
+      break;
+    }
+    case 'apply-note-template': {
+      const template = noteTemplates(data.notes).find(item => item.key === target.dataset.template);
+      if (template) applyNoteTemplate(template);
+      break;
+    }
+    case 'toggle-note-template': {
+      const note = currentNote(); if (!note || storageError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
+      const previous = structuredClone(note);
+      note.isTemplate = !note.isTemplate;
+      if (!save(note)) { Object.keys(note).forEach(key => delete note[key]); Object.assign(note, previous); break; }
+      render(); $('.note-template-toggle')?.focus({ preventScroll: true });
+      toast(note.isTemplate ? '已设为模板，可从新建入口重复使用。' : '已取消模板。'); break;
+    }
     case 'close-modal': dismissModal(); break;
     case 'dismiss': if (modal) dismissModal(); else closeDrawer(); break;
     case 'close-drawer': closeDrawer(); break;
@@ -930,7 +985,7 @@ document.addEventListener('input', event => {
   if (el.dataset.editNote === 'title') {
     el.setCustomValidity('');
     const n = currentNote();
-    if (n && (el.value.trim() || n === noteCreation?.note)) { n.title = el.value; if (n !== noteCreation?.note) { save(n); refreshNoteNavTitle(n); } document.title = `拾序 · ${n.title || '新建笔记'}`; }
+    if (n) { n.title = el.value.trim() || blankNoteTitle; if (n !== noteCreation?.note) { save(n); refreshNoteNavTitle(n); } document.title = `拾序 · ${n.title || '新建笔记'}`; }
   }
 });
 document.addEventListener('change', async event => {
@@ -949,7 +1004,7 @@ document.addEventListener('change', async event => {
   if (el.dataset.editNote && el.dataset.editNote !== 'body') {
     const n = currentNote(), key = el.dataset.editNote;
     if (n === noteCreation?.note) return;
-    if (n) { if (key === 'title' && !el.value.trim()) { el.value = n.title; toast('笔记标题不能为空。'); return; } n[key] = key === 'tags' ? [...new Set(el.value.split(/[,，]/).map(s => s.trim()).filter(Boolean))].slice(0, 20).map(t => t.slice(0, 60)) : el.value.trim(); save(n); document.title = `拾序 · ${n.title}`; if (key === 'category') render(); }
+    if (n) {  n[key] = key === 'tags' ? [...new Set(el.value.split(/[,，]/).map(s => s.trim()).filter(Boolean))].slice(0, 20).map(t => t.slice(0, 60)) : key === 'title' ? el.value.trim() || blankNoteTitle : el.value.trim(); save(n); document.title = `拾序 · ${n.title}`; if (key === 'category') render(); }
   }
   if (el.id === 'import-file' && el.files[0]) {
     try {
@@ -983,9 +1038,26 @@ async function importData() {
   if (!saved) { data = previous; return; }
   importCandidate = null; dismissModal(); toast('副本已导入，现有内容已保留。');
 }
+document.addEventListener('mouseover', event => {
+  const control = event.target.closest('.note-create-control');
+  if (control && !control.contains(event.relatedTarget)) control.classList.remove('is-dismissed');
+});
+document.addEventListener('focusout', event => {
+  const control = event.target.closest('.note-create-control');
+  if (control && !control.contains(event.relatedTarget)) control.classList.remove('is-dismissed');
+});
 document.addEventListener('keydown', event => {
   if (event.target.closest('#sync-dialog')) return;
   if (event.isComposing || event.keyCode === 229) return;
+  const createControl = event.target.closest('.note-create-control');
+  if (createControl && event.key === 'ArrowDown') {
+    event.preventDefault(); createControl.classList.remove('is-dismissed');
+    createControl.querySelector('.note-create-options button').focus(); return;
+  }
+  if (createControl && event.key === 'Escape') {
+    event.preventDefault(); createControl.classList.add('is-dismissed');
+    createControl.querySelector('button').focus(); return;
+  }
   if (event.defaultPrevented && event.target.closest('.cm-editor')) return;
   if (event.key === 'Escape' && CSS.supports('selector(select:open)') && event.target.closest('select')?.matches(':open')) return;
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && event.target.closest('#route-capture-form')) { event.preventDefault(); event.target.closest('form').requestSubmit(); return; }
@@ -1021,7 +1093,7 @@ document.addEventListener('drop', event => {
   dragId = null; render();
 });
 document.addEventListener('dragend', () => { dragId = null; $$('.drag-over,.dragging').forEach(c => c.classList.remove('drag-over', 'dragging')); });
-window.addEventListener('hashchange', () => { modal = null; if (route().category !== null) expandedSections.add(route().section); render(); const drawer = $('.drawer'); if (route().kind === 'new-note') { $('#note-title')?.focus({ preventScroll: true }); } else if (drawer) { $('.drawer-scroll').scrollTop = 0; $('.drawer .icon-button')?.focus(); } else { $('#main h1')?.setAttribute('tabindex', '-1'); $('#main h1')?.focus({ preventScroll: true }); } });
+window.addEventListener('hashchange', () => { modal = null; if (route().category !== null) expandedSections.add(route().section); render(); const drawer = $('.drawer'); if (route().kind === 'note' && route().id === pendingNoteFocus) { pendingNoteFocus = null; $('#note-title')?.focus({ preventScroll: true }); } else if (route().kind === 'new-note') { $('#note-title')?.focus({ preventScroll: true }); } else if (drawer) { $('.drawer-scroll').scrollTop = 0; $('.drawer .icon-button')?.focus(); } else { $('#main h1')?.setAttribute('tabindex', '-1'); $('#main h1')?.focus({ preventScroll: true }); } });
 window.addEventListener('storage', event => {
   if (event.key === NOTE_LAYOUT_KEY) { noteFullWidth = event.newValue === 'full'; applyNoteWidth(); return; }
   if (event.key === LAYOUT_KEY) { workspaceView = workspaceViews.includes(event.newValue) ? event.newValue : 'route'; render(); return; }
@@ -1049,6 +1121,9 @@ const taskDrag = installRouteTaskDrag({ getProject, saveTaskChange, render, anno
 const liveEditor = createLiveNoteEditor({ getNote, notify: toast, onChange(id, body) {
   const note = getNote(id); if (!note) return;
   note.body = body; note.summary = summarize(body); if (note !== noteCreation?.note) save(note);
+  const empty = !body.trim();
+  $('.note-live-paper')?.classList.toggle('is-empty', empty);
+  if ($('#note-template-suggestions')) $('#note-template-suggestions').hidden = !empty;
   if ($('#note-word-count')) $('#note-word-count').textContent = `${body.replace(/!\[[^\[\]\n]*\]\([^\n)]*\)/g, '').trim().length.toLocaleString('zh-CN')} 字`;
 } });
 const datePicker = installDatePicker({ commit(input, value) {
