@@ -130,6 +130,18 @@ test('failed creation does not persist a partial note', async ({ page }) => {
   expect(page.url()).toBe(url); expect(await read(page)).toEqual(before);
 });
 
+test('template creation in another section does not reuse the current category', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'Cross-section menus live in the desktop sidebar');
+  await page.goto('/#knowledge/category/' + encodeURIComponent('技术实践'));
+  await page.locator('.sidebar .nav-group-heading [data-create-menu="inbox"]').hover();
+  await page.getByRole('menuitem', { name: '从模板新建', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '从模板新建：工作周报', exact: true }).click();
+  await expect(body(page)).toContainText('下周计划');
+  const note = (await read(page)).notes[0];
+  expect(note).toMatchObject({ favorite: true, inbox: false });
+  expect(note.category).not.toBe('技术实践');
+});
+
 for (const action of ['mark', 'apply']) {
   test(`failed template ${action} leaves the existing page intact`, async ({ page }) => {
     await page.getByRole('button', { name: '新建页面', exact: true }).click();

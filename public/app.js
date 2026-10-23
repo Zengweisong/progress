@@ -80,7 +80,7 @@ const LAYOUT_KEY = 'shixu.workspace.layout.v1';
 const workspaceViews = ['route', 'board', 'table'];
 let workspaceView = 'route';
 const NOTE_LAYOUT_KEY = 'shixu.note.layout.v1';
-let noteFullWidth = false, noteCreation = null;
+let noteFullWidth = false, noteCreation = null, pendingNoteFocus = null;
 try { noteFullWidth = localStorage.getItem(NOTE_LAYOUT_KEY) === 'full'; } catch { /* Use the standard document width. */ }
 try { const savedView = localStorage.getItem(LAYOUT_KEY); if (workspaceViews.includes(savedView)) workspaceView = savedView; } catch { /* The current view still works without browser storage. */ }
 const entryURL = new URL(location.href), requestedView = entryURL.searchParams.get('layout');
@@ -258,8 +258,9 @@ function createNotePage(options = {}, template) {
   if (!save()) { data.notes.shift(); return; }
   expandedSections.add(section);
   collapsedNoteCategories.delete(JSON.stringify([section, category]));
-  openNote(note.id, options.projectId ? sectionPath() : category ? categoryPath(section, category) : section);
-  requestAnimationFrame(() => $('#note-title')?.focus({ preventScroll: true }));
+  const parent = options.projectId ? sectionPath() : options.category !== undefined ? categoryPath(section, category) : route().section === section ? sectionPath() : section;
+  pendingNoteFocus = note.id;
+  openNote(note.id, parent);
 }
 function applyNoteTemplate(template) {
   const note = currentNote();
@@ -785,7 +786,7 @@ document.addEventListener('click', async event => {
     case 'quick-note': openNoteCreate(); break;
     case 'project-new-note': openNoteCreate({ projectId: target.dataset.id }); break;
     case 'cancel-note-create': { const projectId = route().id; noteCreation = null; if (getProject(projectId)) openProject(projectId); else closeDrawer(); break; }
-    case 'new-from-template': showModal('note-templates', { section: target.dataset.section || 'knowledge', category: target.dataset.name ?? (route().section === 'knowledge' ? route().category : null) }); break;
+    case 'new-from-template': showModal('note-templates', { section: target.dataset.section || 'knowledge', category: target.dataset.name }); break;
     case 'note-template-picker': showModal('note-templates', { apply: true }); break;
     case 'select-note-template': {
       const template = noteTemplates(data.notes).find(item => item.key === target.dataset.template);
@@ -1092,7 +1093,7 @@ document.addEventListener('drop', event => {
   dragId = null; render();
 });
 document.addEventListener('dragend', () => { dragId = null; $$('.drag-over,.dragging').forEach(c => c.classList.remove('drag-over', 'dragging')); });
-window.addEventListener('hashchange', () => { modal = null; if (route().category !== null) expandedSections.add(route().section); render(); const drawer = $('.drawer'); if (route().kind === 'new-note') { $('#note-title')?.focus({ preventScroll: true }); } else if (drawer) { $('.drawer-scroll').scrollTop = 0; $('.drawer .icon-button')?.focus(); } else { $('#main h1')?.setAttribute('tabindex', '-1'); $('#main h1')?.focus({ preventScroll: true }); } });
+window.addEventListener('hashchange', () => { modal = null; if (route().category !== null) expandedSections.add(route().section); render(); const drawer = $('.drawer'); if (route().kind === 'note' && route().id === pendingNoteFocus) { pendingNoteFocus = null; $('#note-title')?.focus({ preventScroll: true }); } else if (route().kind === 'new-note') { $('#note-title')?.focus({ preventScroll: true }); } else if (drawer) { $('.drawer-scroll').scrollTop = 0; $('.drawer .icon-button')?.focus(); } else { $('#main h1')?.setAttribute('tabindex', '-1'); $('#main h1')?.focus({ preventScroll: true }); } });
 window.addEventListener('storage', event => {
   if (event.key === NOTE_LAYOUT_KEY) { noteFullWidth = event.newValue === 'full'; applyNoteWidth(); return; }
   if (event.key === LAYOUT_KEY) { workspaceView = workspaceViews.includes(event.newValue) ? event.newValue : 'route'; render(); return; }

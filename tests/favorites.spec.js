@@ -76,8 +76,10 @@ test('new drafts can be starred before creation while quick records begin unstar
   await expect(page.locator('.note-card').filter({ hasText: saved.title })).toHaveCount(1);
   await page.goto('/#projects');
   await page.keyboard.press('n');
-  await expect(page).toHaveURL(/#knowledge\/new-note$/);
+  await expect(page).toHaveURL(/#knowledge\/note\//);
   await expect(star(page)).toHaveAttribute('aria-pressed', 'false');
+  expect((await read(page)).notes).toHaveLength(before + 2);
+  expect((await read(page)).notes[0]).toMatchObject({ title: '未命名页面', body: '', favorite: false, inbox: false });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
 
