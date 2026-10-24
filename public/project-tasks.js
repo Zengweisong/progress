@@ -59,6 +59,7 @@ export function renderProjectTasks(project, { esc, icon, scope = 'route' }) {
         <label class="module-task-check"><input type="checkbox" data-task="${esc(task.id)}" data-project-id="${esc(project.id)}" ${task.done ? 'checked' : ''} aria-label="${esc(task.title)}"><span aria-hidden="true">${task.done ? icon('check') : ''}</span></label>
         <button type="button" class="module-task-title" data-action="edit-task" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}" aria-label="编辑任务：${esc(task.title)}">${esc(task.title)}</button>
         ${renderSelect({ esc, options: Object.entries(taskStates), value: taskStatus(task), kind: 'task', className: 'module-task-status', attributes: `data-task-status="${esc(task.id)}" data-project-id="${esc(project.id)}" aria-label="${esc(task.title)}的任务状态"` })}
+        <div class="module-task-description live-note-editor description-editor" data-description-editor data-task-description="${esc(task.id)}" data-project-id="${esc(project.id)}"></div>
       </div>`).join('')}</div>
       ${renderTaskAdd(project, module, { esc, icon, scope })}
     </section>`).join('')}</div>

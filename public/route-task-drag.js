@@ -55,7 +55,7 @@ export function installRouteTaskDrag({ getProject, saveTaskChange, render, annou
       const items = rows(g.target).filter(row => row !== g.station);
       const horizontal = g.view === 'route';
       g.to = items.findIndex(row => {
-        const bounds = (horizontal ? row.querySelector('.mr-station-dot') : row).getBoundingClientRect();
+        const bounds = row.querySelector(horizontal ? '.mr-station-dot' : '.module-task-title').getBoundingClientRect();
         return horizontal ? g.x < bounds.x + bounds.width / 2 : g.y < bounds.y + bounds.height / 2;
       });
       if (g.to < 0) g.to = items.length;

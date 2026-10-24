@@ -20,7 +20,7 @@ export function searchWorkspace(data, query, type = 'all', limit = 40) {
   }
   for (const project of data.projects) {
     add('project', project, project.description);
-    for (const task of project.tasks) add('task', task, '', { projectId: project.id, projectTitle: project.title, archived: Boolean(task.archived || project.archived) });
+    for (const task of project.tasks) add('task', task, task.description || '', { projectId: project.id, projectTitle: project.title, archived: Boolean(task.archived || project.archived) });
   }
   for (const note of data.notes) add('note', note, `${note.body} ${note.tags.join(' ')} ${note.category}`, { category: note.category });
   matches.sort((a, b) => a.rank - b.rank);

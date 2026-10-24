@@ -29,10 +29,10 @@ test('custom modules, parallel statuses, task moves and deletions persist withou
   await line(page).getByRole('combobox', { name: '设计编辑器的任务状态', exact: true }).selectOption('active');
   await line(page).getByRole('combobox', { name: '实现接口的任务状态', exact: true }).selectOption('active');
   await expect(line(page).locator('.module-task.is-active')).toHaveCount(2);
-  await expect(line(page).locator('.progress-meta strong')).toHaveText('0%');
+  await expect(line(page).locator('.module-task.is-done')).toHaveCount(0);
   await line(page).getByRole('checkbox', { name: '设计编辑器', exact: true }).check();
   await expect(ui.locator('.module-heading')).toContainText('1/1');
-  await expect(line(page).locator('.progress-meta strong')).toHaveText('20%');
+  await expect(line(page).locator('.module-task.is-done')).toHaveCount(1);
   await server.getByRole('button', { name: '编辑任务：实现接口', exact: true }).click();
   const edit = page.getByRole('dialog', { name: '编辑任务', exact: true });
   const saved = await read(page), uiId = saved.projects[0].modules.find(module => module.name === '界面').id;
@@ -53,7 +53,7 @@ test('custom modules, parallel statuses, task moves and deletions persist withou
   await expect(line(page).getByRole('region', { name: '默认模块模块' }).locator('.module-heading')).toContainText('1/5');
   await line(page).getByRole('button', { name: '编辑任务：设计编辑器', exact: true }).click();
   await page.getByRole('button', { name: '删除任务', exact: true }).click();
-  await expect(line(page).locator('.progress-meta strong')).toHaveText('0%');
+  await expect(line(page).locator('.module-task.is-done')).toHaveCount(0);
   const result = await read(page); validateData(result);
   expect(result.projects[0].tasks).toHaveLength(4);
   for (const task of seedData().projects[2].tasks) expect(result.projects[0].tasks).toContainEqual(task);

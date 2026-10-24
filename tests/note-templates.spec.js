@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { seedData, validateData } from '../public/data.js';
+import { blankNoteTitle } from '../public/note-templates.js';
 import { readFile } from 'node:fs/promises';
 const key = 'shixu.workspace.v1';
 const read = page => page.evaluate(async key => {
@@ -7,6 +8,7 @@ const read = page => page.evaluate(async key => {
   return hydrateWorkspace(JSON.parse(localStorage.getItem(key)));
 }, key);
 const body = page => page.getByRole('textbox', { name: '笔记正文', exact: true });
+const withoutTime = value => JSON.parse(JSON.stringify(value, (key, value) => key === 'updatedAt' ? undefined : value));
 
 test.beforeEach(async ({ page }) => {
   const data = seedData();
@@ -174,4 +176,77 @@ test('more templates apply to the existing blank page offline', async ({ page, c
   await dialog.getByRole('button', { name: '从模板新建：项目复盘', exact: true }).click();
   await expect(body(page)).toContainText('实际成果');
   expect(page.url()).toBe(url); expect((await read(page)).notes).toHaveLength(8);
+  await body(page).press('Control+z');
+  await expect.poll(async () => (await read(page)).notes[0].body).toBe('');
+  expect((await read(page)).notes[0].title).toBe(blankNoteTitle);
+  expect((await read(page)).notes).toHaveLength(8);
+});
+
+test('one editor Ctrl+Z restores the complete page after applying a template', async ({ page }) => {
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
+  await body(page).fill('  \n');
+  const before = (await read(page)).notes[0], url = page.url(), count = (await read(page)).notes.length;
+  await page.getByRole('button', { name: '使用模板：会议记录', exact: true }).click();
+  await expect(body(page)).toContainText('会议信息');
+  await expect(page.locator('#note-title')).toHaveValue('会议记录');
+  await body(page).press('Control+z');
+  await expect.poll(async () => withoutTime((await read(page)).notes.find(note => note.id === before.id))).toEqual(withoutTime(before));
+  await expect(page.locator('#note-title')).toHaveValue('');
+  await expect(page.locator('#note-template-suggestions')).toBeVisible();
+  expect(page.url()).toBe(url); expect((await read(page)).notes).toHaveLength(count);
+  await page.reload(); expect(withoutTime((await read(page)).notes.find(note => note.id === before.id))).toEqual(withoutTime(before));
+});
+
+test('undo restores custom-template tags and image attachments without changing the source template', async ({ page }) => {
+  const data = await read(page), source = data.notes[0];
+  const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+  source.isTemplate = true; source.title = '图片页面模板'; source.tags = ['模板标签'];
+  source.body = '## 模板内容\n\n![模板图片](attachment:new-image)';
+  source.attachments = [{ id: 'new-image', name: '模板图片.png', mime: 'image/png', data: image }];
+  data.notes.unshift({ id: 'template-target', title: blankNoteTitle, body: '', summary: '', category: '技术实践', tags: [], projectIds: ['p1'], favorite: true, inbox: false, updatedAt: source.updatedAt,
+    attachments: [{ id: 'old-image', name: '原有图片.png', mime: 'image/png', data: image }] });
+  await page.evaluate(({ key, data }) => localStorage.setItem(key, JSON.stringify(data)), { key, data });
+  await page.goto('/#knowledge/note/template-target');
+  await page.reload(); await expect(body(page)).toBeVisible();
+  const before = (await read(page)).notes.find(note => note.id === 'template-target');
+  await page.getByRole('button', { name: '更多模板', exact: false }).click();
+  await page.getByRole('dialog', { name: '选择页面模板', exact: true }).getByRole('button', { name: '从模板新建：图片页面模板', exact: true }).click();
+  await expect(page.locator('.cm-note-image img')).toHaveCount(1);
+  expect((await read(page)).notes.find(note => note.id === before.id).tags).toEqual(['模板标签']);
+  await page.getByRole('button', { name: '设为模板', exact: true }).focus(); await page.keyboard.press('Control+z');
+  await expect.poll(async () => withoutTime((await read(page)).notes.find(note => note.id === before.id))).toEqual(withoutTime(before));
+  expect((await read(page)).notes.find(note => note.id === source.id)).toEqual(source);
+  await expect(page.locator('.cm-note-image')).toHaveCount(0);
+});
+
+test('typing after a template undoes before the template as a separate step', async ({ page }) => {
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
+  await body(page).fill(' \n');
+  const before = (await read(page)).notes[0];
+  await page.getByRole('button', { name: '使用模板：工作周报', exact: true }).click();
+  await expect(body(page)).toContainText('下周计划');
+  const applied = (await read(page)).notes[0];
+  await body(page).press('Control+End'); await page.keyboard.insertText('\n模板之后补充的文字');
+  await expect.poll(async () => (await read(page)).notes[0].body).toContain('模板之后补充的文字');
+  await body(page).press('Control+z');
+  await expect.poll(async () => (await read(page)).notes[0].body).toBe(applied.body);
+  expect((await read(page)).notes[0].title).toBe(applied.title);
+  await body(page).press('Control+z');
+  await expect.poll(async () => withoutTime((await read(page)).notes[0])).toEqual(withoutTime(before));
+});
+
+test('a failed template undo keeps both the applied page and its stored contents intact', async ({ page }) => {
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
+  await page.getByRole('button', { name: '使用模板：读书笔记', exact: true }).click();
+  await expect(body(page)).toContainText('书籍信息');
+  const applied = await read(page);
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(name, value) { if (name === key) throw new DOMException('No room', 'QuotaExceededError'); return original.call(this, name, value); };
+  }, key);
+  await body(page).press('Control+z');
+  await expect(page.locator('#toast')).toContainText('保存失败');
+  expect(await read(page)).toEqual(applied);
+  await expect(page.locator('#note-title')).toHaveValue('读书笔记');
+  await expect(body(page)).toContainText('书籍信息');
 });

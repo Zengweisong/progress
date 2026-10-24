@@ -50,7 +50,7 @@ export function createSyncClient({ space, storageKey, getData, applyData, canSyn
     try {
       const response = await fetch(`/api/${path}`, {
         method, credentials: 'same-origin', cache: 'no-store', signal: abort.signal,
-        headers: { Accept: 'application/json', ...(method !== 'GET' ? { 'Content-Type': 'application/json', 'X-Shixu-Request': '1' } : {}) },
+        headers: { Accept: 'application/json', 'X-Shixu-Templates': '1', ...(method !== 'GET' ? { 'Content-Type': 'application/json', 'X-Shixu-Request': '1' } : {}) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       let result;

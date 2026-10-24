@@ -162,7 +162,7 @@ test('an unfinished workspace transition blocks automatic sync and merge until c
   expect(recovered.meta.ownerId).toBe(user.id);
   expect(recovered.status.state).toBe('synced');
   expect(recovered.backups.some(backup => backup.data.projects[0].title === local.projects[0].title)).toBe(true);
-  const remote = await (await page.request.get('/api/workspace?space=main')).json();
+  const remote = await (await page.request.get('/api/workspace?space=main', { headers: { 'X-Shixu-Templates': '1' } })).json();
   expect(remote.revision).toBe(1);
   expect(remote.data.projects[0].title).toBe(baseline.projects[0].title);
 });
@@ -197,7 +197,7 @@ test('switching the session after GET cannot write an old account snapshot into 
     expect(await page.evaluate(() => window.client.getStatus().state)).toBe('signed-out');
     expect(await page.evaluate(() => window.syncData.projects[0].title)).toBe('甲账号尚未上传的修改');
 
-    const remote = await (await page.request.get('/api/workspace?space=main')).json();
+    const remote = await (await page.request.get('/api/workspace?space=main', { headers: { 'X-Shixu-Templates': '1' } })).json();
     expect(remote.userId).toBe(bob.id);
     expect(remote.revision).toBe(1);
     expect(remote.data).toEqual(bobData);
@@ -231,7 +231,7 @@ test('another tab changing workspace ownership blocks stale local content from u
     try { await window.client.connect('merge'); return ''; } catch (error) { return error.message; }
   });
   expect(mergeError).toContain('另一窗口已切换');
-  const remote = await (await page.request.get('/api/workspace?space=main')).json();
+  const remote = await (await page.request.get('/api/workspace?space=main', { headers: { 'X-Shixu-Templates': '1' } })).json();
   expect(remote.userId).toBe(alice.id);
   expect(remote.revision).toBe(1);
   expect(remote.data).toEqual(baseline);

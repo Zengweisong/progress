@@ -144,7 +144,7 @@ test('captured markup stays text and layout edits preserve the real workspace', 
   expect(await page.evaluate(() => window.__layoutInjection)).toBeUndefined();
   expect(await page.evaluate(key => localStorage.getItem(key), workspaceKey)).toBe(original);
   await page.goto('/#projects/project/p1');
-  await expect(page.locator('.drawer .progress-meta')).toContainText('60%');
+  await expect(page.locator('.drawer .module-task input[type="checkbox"]:checked')).toHaveCount(3);
   expect(await page.evaluate(key => localStorage.getItem(key), workspaceKey)).toBe(original);
 });
 

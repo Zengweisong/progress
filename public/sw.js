@@ -1,13 +1,13 @@
-const CACHE = 'shixu-shell-v19';
+const CACHE = 'shixu-shell-v26';
 const SHELL = [
   '/', '/index.html', '/layouts.html', '/designs.html', '/favicon.svg',
   '/app.js', '/data.js', '/styles.css', '/designs.js', '/designs.css',
   '/workspace-route.css', '/project-tasks.js', '/select-control.js', '/project-tasks.css', '/route-task-drag.js', '/record-order.js',
   '/sidebar.js', '/sidebar.css', '/sidebar-create.js',
   '/theme.js', '/theme.css',
-  '/note-templates.js', '/note-editor.js', '/note-editor.css', '/markdown.js', '/categories.js',
-  '/live-note-editor.js', '/live-note-editor.css', '/note-images.js', '/vendor/editor/codemirror.js',
-  '/workspace-storage.js', '/workspace-search.js', '/recycle-bin.js', '/workspace-tools.css',
+  '/note-templates.js', '/template-drag.js', '/note-editor.js', '/note-editor.css', '/markdown.js', '/categories.js',
+  '/live-note-editor.js', '/live-note-editor.css', '/description-editors.js', '/note-images.js', '/vendor/editor/codemirror.js',
+  '/workspace-storage.js', '/workspace-search.js', '/workspace-undo.js', '/recycle-bin.js', '/workspace-tools.css',
   '/date-picker.js', '/date-picker.css',
   '/vendor/markdown/marked.js', '/vendor/markdown/purify.js',
   '/layouts.js', '/layouts.css', '/layouts-focus-journal.js', '/layouts-focus-journal.css',

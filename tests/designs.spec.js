@@ -72,7 +72,7 @@ test('preview interactions leave the real workspace untouched and honor accessib
   await page.locator('#design-search-results button').click();
   await expect(page.locator('.d-reading-paper h1')).toHaveText('设计预览中的独立想法');
   await page.goto('/#projects/project/p1');
-  await expect(page.locator('.drawer .progress-meta')).toContainText('60%');
+  await expect(page.locator('.drawer .module-task input[type="checkbox"]:checked')).toHaveCount(3);
   await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
   await expect(page.locator('.project-card')).toHaveCount(8);
 });

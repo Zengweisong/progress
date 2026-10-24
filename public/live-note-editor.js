@@ -1,4 +1,4 @@
-import { EditorView, EditorState, StateField, StateEffect, EditorSelection, Transaction, Decoration, WidgetType, keymap, placeholder, drawSelection, history, historyKeymap, defaultKeymap, indentWithTab, markdown, markdownKeymap, GFM, syntaxTree, syntaxHighlighting, defaultHighlightStyle, bracketMatching } from './vendor/editor/codemirror.js';
+import { EditorView, EditorState, StateField, StateEffect, EditorSelection, Transaction, Decoration, WidgetType, keymap, placeholder, drawSelection, history, historyKeymap, defaultKeymap, indentWithTab, isolateHistory, markdown, markdownKeymap, GFM, syntaxTree, syntaxHighlighting, defaultHighlightStyle, bracketMatching } from './vendor/editor/codemirror.js';
 import { persistAttachments } from './workspace-storage.js';
 import { textMatches } from './workspace-search.js';
 import { renderMarkdown } from './markdown.js';
@@ -80,7 +80,7 @@ function liveDecorations(state, focused, attachments) {
   return { decorations: Decoration.set(marks, true), atomic: Decoration.set(atomic, true), focused };
 }
 
-export function createLiveNoteEditor({ onChange, getNote, notify }) {
+export function createLiveNoteEditor({ onChange, getNote, notify, contentId = 'note-body', label = '笔记正文', placeholderText = '从这里开始写作，输入 Markdown，或粘贴、拖入图片…', maxLength = 200000, allowImages = true, limitMessage = '笔记内容已达长度上限。', onFocus, onUndo }) {
   let view = null, noteId = null, alive = 0, importing = false, hydrating = false;
   const field = StateField.define({
     create: state => liveDecorations(state, false, getNote(noteId)?.attachments || []),
@@ -112,7 +112,7 @@ export function createLiveNoteEditor({ onChange, getNote, notify }) {
     view.dispatch({ changes: { from, to, insert }, selection: { anchor, head }, userEvent: 'input' }); view.focus(); return true;
   }
   async function images(files) {
-    if (!view || importing || !files.length) return;
+    if (!allowImages || !view || importing || !files.length) return;
     const token = alive, targetId = noteId; importing = true;
     try {
       const assets = [];
@@ -123,7 +123,7 @@ export function createLiveNoteEditor({ onChange, getNote, notify }) {
       if (current.length + assets.length > 50 || [...current, ...assets].reduce((total, asset) => total + asset.data.length, 0) > MAX_NOTE_IMAGE_DATA) throw new Error('这篇笔记的图片已达容量上限，请压缩图片后再插入。');
       const insert = assets.map(asset => `![${asset.name.replace(/[\[\]\\\r\n]/g, '').slice(0, 100)}](attachment:${asset.id})`).join('\n\n');
       const { from, to } = view.state.selection.main, prefix = from && view.state.doc.sliceString(from - 1, from) !== '\n' ? '\n\n' : '';
-      if (view.state.doc.length - (to - from) + prefix.length + insert.length + 2 > 200000) throw new Error('笔记内容已达长度上限。');
+      if (view.state.doc.length - (to - from) + prefix.length + insert.length + 2 > maxLength) throw new Error(limitMessage);
       note.attachments = [...current, ...assets];
       view.dispatch({ changes: { from, to, insert: prefix + insert + '\n\n' }, selection: { anchor: from + prefix.length + insert.length + 2 }, userEvent: 'input' }); view.focus();
     } catch (error) { notify(error.message || '图片无法读取，请换一张图片。'); }
@@ -141,11 +141,11 @@ export function createLiveNoteEditor({ onChange, getNote, notify }) {
     destroy(); noteId = note.id;
     view = new EditorView({ parent, state: EditorState.create({ doc: note.body, extensions: [
       markdown({ extensions: GFM }), history(), drawSelection(), bracketMatching(), syntaxHighlighting(defaultHighlightStyle), EditorView.lineWrapping,
-      placeholder('从这里开始写作，输入 Markdown，或粘贴、拖入图片…'), field,
+      placeholder(placeholderText), field,
       EditorView.atomicRanges.of(view => view.state.field(field).atomic),
-      EditorView.contentAttributes.of({ id: 'note-body', 'aria-label': '笔记正文', spellcheck: 'false' }),
-      keymap.of([{ key: 'Mod-b', run: () => format('bold') }, { key: 'Mod-i', run: () => format('italic') }, { key: 'Mod-k', run: () => format('link') }, ...markdownKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
-      EditorState.changeFilter.of(tr => { if (tr.newDoc.length <= 200000) return true; queueMicrotask(() => notify('笔记内容已达长度上限。')); return false; }),
+      EditorView.contentAttributes.of({ id: contentId, 'aria-label': label, spellcheck: 'false' }),
+      keymap.of([{ key: 'Mod-z', run: () => onUndo?.() || false }, { key: 'Mod-b', run: () => format('bold') }, { key: 'Mod-i', run: () => format('italic') }, { key: 'Mod-k', run: () => format('link') }, ...markdownKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+      EditorState.changeFilter.of(tr => { if (tr.newDoc.length <= maxLength) return true; queueMicrotask(() => notify(limitMessage)); return false; }),
       EditorView.updateListener.of(update => { if (update.docChanged && !hydrating) onChange(noteId, update.state.doc.toString()); }),
       EditorView.domEventHandlers({
         click: (event, editor) => {
@@ -157,11 +157,11 @@ export function createLiveNoteEditor({ onChange, getNote, notify }) {
           if (href && /^https?:\/\//i.test(href)) { event.preventDefault(); window.open(href, '_blank', 'noopener,noreferrer'); return true; }
           return false;
         },
-        focus: (_, view) => { view.dispatch({ effects: focusEffect.of(true) }); },
+        focus: (_, view) => { view.dispatch({ effects: focusEffect.of(true) }); onFocus?.(); },
         blur: (_, view) => { view.dispatch({ effects: focusEffect.of(false) }); },
-        paste: event => { const files = [...(event.clipboardData?.files || [])].filter(file => file.type.startsWith('image/')); if (!files.length) return false; event.preventDefault(); void images(files); return true; },
-        dragover: event => { if ([...(event.dataTransfer?.types || [])].includes('Files')) { event.preventDefault(); return true; } return false; },
-        drop: (event, editor) => { const files = [...(event.dataTransfer?.files || [])]; if (!files.length) return false; event.preventDefault(); const pos = editor.posAtCoords({ x: event.clientX, y: event.clientY }); if (pos !== null) editor.dispatch({ selection: { anchor: pos } }); void images(files); return true; },
+        paste: event => { const files = [...(event.clipboardData?.files || [])].filter(file => file.type.startsWith('image/')); if (!allowImages || !files.length) return false; event.preventDefault(); void images(files); return true; },
+        dragover: event => { if (allowImages && [...(event.dataTransfer?.types || [])].includes('Files')) { event.preventDefault(); return true; } return false; },
+        drop: (event, editor) => { const files = [...(event.dataTransfer?.files || [])]; if (!allowImages || !files.length) return false; event.preventDefault(); const pos = editor.posAtCoords({ x: event.clientX, y: event.clientY }); if (pos !== null) editor.dispatch({ selection: { anchor: pos } }); void images(files); return true; },
       }),
     ] }) });
   }
@@ -172,5 +172,18 @@ export function createLiveNoteEditor({ onChange, getNote, notify }) {
     if (match) view.dispatch({ selection: { anchor: match.from, head: match.to }, scrollIntoView: true });
     view.focus();
   }
-  return { mount, destroy, format, images, focusMatch, isBusy: () => importing };
+  function setSelection(selection) {
+    if (!view || !selection) return;
+    const length = view.state.doc.length;
+    view.dispatch({ selection: EditorSelection.create(selection.ranges.map(range => EditorSelection.range(Math.min(range.anchor, length), Math.min(range.head, length))), selection.mainIndex) });
+  }
+  function focus() {
+    if (!view) return;
+    view.focus();
+    // Reparenting can reset the browser range while CodeMirror retains its
+    // cached range. Restore the actual DOM range before its next observation.
+    const { anchor, head } = view.state.selection.main, from = view.domAtPos(anchor), to = view.domAtPos(head);
+    view.contentDOM.ownerDocument.getSelection()?.setBaseAndExtent(from.node, from.offset, to.node, to.offset);
+  }
+  return { mount, destroy, format, images, focusMatch, setSelection, getSelection: () => view?.state.selection, focus, isolateUndo: () => view?.dispatch({ annotations: isolateHistory.of('full') }), isBusy: () => importing };
 }

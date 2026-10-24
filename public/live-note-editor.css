@@ -37,3 +37,16 @@
 .cm-note-table th { background: #f0f5ec; font-weight: 600; }
 @media (max-width: 700px) { .live-note-editor .cm-editor { font-size: 16px; } .live-note-editor .cm-content { padding-top: 18px; } .live-note-editor .cm-md-h1 { font-size: 25px; } .live-note-editor .cm-md-h2 { font-size: 21px; } .note-document { padding-inline: 20px; } .cm-note-table th, .cm-note-table td { min-width: 85px; padding: 7px 10px; } }
 @media (pointer: coarse) { .cm-note-image button { opacity: 1; } }
+.description-editor .cm-editor { min-height: 24px; color: var(--ink); font-size: 13px; line-height: 1.8; }
+.description-editor .cm-content { min-height: 24px; padding: 0; caret-color: var(--primary); }
+.description-editor .cm-placeholder { color: var(--muted); opacity: .7; }
+.description-editor .cm-md-heading { padding-block: 8px 4px; }
+.description-editor .cm-md-h1 { font-size: 22px; }
+.description-editor .cm-md-h2 { font-size: 19px; }
+.description-editor .cm-md-h3 { font-size: 16px; }
+.description-editor .cm-note-table table { display: table; width: auto; border-collapse: collapse; font-size: 13px; }
+.description-editor .cm-note-image img { max-height: 240px; }
+.project-description-editor { width: 100%; min-height: 55px; margin-top: 8px; padding: 8px; border: 1px solid transparent; border-radius: 5px; }
+.project-description-editor:hover { border-color: var(--line); }
+.project-description-editor:focus-within { border-color: var(--primary); }
+@media (max-width: 700px) { .description-editor .cm-editor { font-size: 16px; } }
