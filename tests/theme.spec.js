@@ -102,13 +102,15 @@ test('project details, calendar and account dialogs use dark surfaces', async ({
   const detail = page.locator('.project-detail');
   await expect(detail).toBeVisible();
   expect(await detail.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(32, 42, 37)');
-  await page.getByRole('button', { name: '截止日期', exact: true }).click();
+  await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
+  await page.getByRole('button', { name: '新建项目', exact: true }).click();
+  await page.getByRole('button', { name: '截止日期（可选）', exact: true }).click();
   const calendar = page.locator('.calendar-popover');
   await expect(calendar).toBeVisible();
   expect(await calendar.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(32, 42, 37)');
   await page.screenshot({ path: `.tools/theme-${info.project.name}-calendar.png`, fullPage: true, animations: 'disabled' });
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
+  await page.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '账号与多端同步', exact: true }).click();
   const account = page.locator('#sync-dialog');
   await expect(account).toBeVisible();

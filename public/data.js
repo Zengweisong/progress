@@ -1,3 +1,5 @@
+import { defaultTemplates } from './note-templates.js';
+
 export const statuses = [
   { id: 'planned', label: '待开始', color: 'gray', icon: 'circle' },
   { id: 'active', label: '进行中', color: 'blue', icon: 'progress' },
@@ -37,7 +39,7 @@ export function seedData() {
       note('n7', '一个关于快速记录的想法', '想到的时候，应该可以先写下来，不必先决定放在哪里。', '产品与设计', ['灵感'], [], '# 一个关于快速记录的想法\n\n如果每次记录都要先选项目、分类和标签，很多想法可能就不会被记下来。\n\n收集箱可以承接这些还没整理的内容。等有空时，再把它们与项目连接起来。', true),
     ],
     fields: [],
-    folders: [],
+    folders: [], templates: defaultTemplates(),
     preferences: { view: 'board', sort: 'updated', group: 'status' },
   };
 }
@@ -66,6 +68,7 @@ export function validateData(value) {
     for (const t of p.tasks) {
       if (t?.archived !== undefined && typeof t.archived !== 'boolean') fail();
       if (!t || !str(t.id, 100) || !str(t.title, 500) || typeof t.done !== 'boolean') fail();
+      if (t.description !== undefined && !str(t.description, 20000)) fail();
       if (t.status !== undefined && (!['todo', 'active', 'done'].includes(t.status) || t.done !== (t.status === 'done'))) fail();
       if (t.moduleId !== undefined && (!str(t.moduleId, 100) || (t.moduleId && !moduleIds.has(t.moduleId)))) fail();
     }
@@ -103,6 +106,13 @@ export function validateData(value) {
     folderIds.add(folder.id);
     if (!validOrder(folder)) fail();
     if (folder.uncategorizedHidden !== undefined && (folder.uncategorizedHidden !== true || folder.name !== '未分类')) fail();
+  }
+  if (value.templates === undefined) value.templates = defaultTemplates();
+  if (!Array.isArray(value.templates) || value.templates.length > 100) fail();
+  const templateIds = new Set();
+  for (const template of value.templates) {
+    if (!template || !str(template.id, 100) || !template.id || templateIds.has(template.id) || !str(template.title, 200) || !template.title.trim() || !str(template.description, 500) || !str(template.body, 200000) || !str(template.glyph, 32) || !str(template.updatedAt, 50) || Number.isNaN(Date.parse(template.updatedAt)) || !validOrder(template)) fail();
+    templateIds.add(template.id);
   }
   const prefs = value.preferences;
   value.preferences = { view: prefs?.view === 'table' ? 'table' : 'board', sort: ['updated', 'title', 'due', 'manual'].includes(prefs?.sort) ? prefs.sort : 'updated', group: prefs?.group === 'priority' ? 'priority' : 'status' };

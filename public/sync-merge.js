@@ -1,8 +1,9 @@
 import { validateData } from './data.js';
 import { taskStatus } from './project-tasks.js';
+import { defaultTemplates } from './note-templates.js';
 
 const ABSENT = Symbol('absent');
-const COLLECTIONS = ['projects', 'notes', 'fields', 'folders'];
+const COLLECTIONS = ['projects', 'notes', 'fields', 'folders', 'templates'];
 const owns = (value, key) => value != null && Object.hasOwn(value, key);
 const at = (value, key) => owns(value, key) ? value[key] : ABSENT;
 const byId = records => new Map(records.map(record => [record.id, record]));
@@ -35,7 +36,7 @@ function equal(a, b, root = false, ignoreTimestamp = true) {
 export function equalData(a, b) { return equal(a, b, true); }
 
 export function emptyWorkspace() {
-  return { version: 1, projects: [], notes: [], fields: [], folders: [], preferences: { view: 'board', sort: 'updated', group: 'status' } };
+  return { version: 1, projects: [], notes: [], fields: [], folders: [], templates: defaultTemplates(), preferences: { view: 'board', sort: 'updated', group: 'status' } };
 }
 
 function workspace(value) { return validateData(copy(value ?? emptyWorkspace())); }
@@ -224,7 +225,7 @@ function runMerge(baseValue, localValue, remoteValue, choice) {
 }
 
 function checked(data) {
-  if (data.projects.length > 3000 || data.notes.length > 10000 || data.fields.length > 30 || data.folders.length > 300) throw new Error('合并后的记录数量超过工作区上限，请先导出备份并整理记录。');
+  if (data.projects.length > 3000 || data.notes.length > 10000 || data.fields.length > 30 || data.folders.length > 300 || data.templates.length > 100) throw new Error('合并后的记录数量超过工作区上限，请先导出备份并整理记录。');
   return validateData(copy(data));
 }
 
@@ -258,6 +259,10 @@ export function resolveWorkspaceConflicts(base, local, remote, choice) {
   const newIds = Object.fromEntries(COLLECTIONS.map(collection => [collection, idFactory([...data[collection], ...merged.local[collection], ...merged.remote[collection]])]));
   const projectRemap = new Map(), fieldRemap = new Map();
   const duplicates = conflicts.filter(conflict => conflict.local && conflict.remote && !equal(conflict.local, conflict.remote));
+
+  for (const conflict of duplicates.filter(item => item.collection === 'templates')) {
+    data.templates.push({ ...copy(conflict.remote), id: newIds.templates(conflict.id), title: duplicateTitle(conflict.remote.title, 200) });
+  }
 
   for (const conflict of duplicates.filter(item => item.collection === 'folders')) {
     data.folders.push({ ...copy(conflict.remote), id: newIds.folders(conflict.id) });

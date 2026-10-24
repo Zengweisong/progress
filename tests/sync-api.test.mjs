@@ -39,6 +39,7 @@ async function fixture(t, options = {}) {
     const response = await fetch(`${origin}${path}`, {
       method,
       headers: {
+        'X-Shixu-Templates': '1',
         ...(unsafe ? { Origin: options.publicOrigin || origin, 'X-Shixu-Request': '1', 'Content-Type': 'application/json' } : {}),
         ...(cookie ? { Cookie: cookie } : {}),
         ...headers,
@@ -78,6 +79,32 @@ test('session registration, safe cookie, login, and server-side logout invalidat
   assert.equal((await f.request('/api/workspace', { cookie: login.cookie })).status, 401);
   const duplicate = await f.request('/api/register', { method: 'POST', body: { username: 'ALICE', password } });
   assert.equal(duplicate.status, 409);
+});
+
+test('legacy uploads preserve customized common templates while saving other edits', async t => {
+  const f = await fixture(t), alice = await f.register(), data = seedData();
+  data.templates[0].title = '我的会议模板'; data.templates[0].body = '## 自定义会议流程';
+  data.templates[0].order = 1; data.templates[1].order = 0;
+  const first = await f.request('/api/workspace?space=main', { method: 'PUT', cookie: alice.cookie, body: { expectedRevision: 0, data } });
+  assert.equal(first.status, 200);
+  const legacy = structuredClone(data); delete legacy.templates;
+  legacy.notes[0].body = '旧页面仍能保存笔记';
+  const legacyHeaders = { 'X-Shixu-Templates': '' };
+  const second = await f.request('/api/workspace?space=main', { method: 'PUT', cookie: alice.cookie, headers: legacyHeaders, body: { expectedRevision: 1, data: legacy } });
+  assert.equal(second.status, 200);
+  assert.deepEqual(second.data.data, legacy, 'A legacy client can confirm its upload without unknown collections keeping it pending');
+  assert.equal(second.data.data.notes[0].body, legacy.notes[0].body);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const polled = await f.request('/api/workspace?space=main', { cookie: alice.cookie, headers: legacyHeaders });
+    assert.deepEqual(polled.data, second.data, 'Polling a confirmed legacy snapshot must not require another upload');
+  }
+  const stale = await f.request('/api/workspace?space=main', { method: 'PUT', cookie: alice.cookie, headers: legacyHeaders, body: { expectedRevision: 1, data: legacy } });
+  assert.equal(stale.status, 409); assert.deepEqual(stale.data.current, second.data, 'Revision conflicts also use the legacy projection');
+  const loaded = await f.request('/api/workspace?space=main', { cookie: alice.cookie });
+  assert.deepEqual(loaded.data.data.templates, data.templates);
+  const modern = structuredClone(loaded.data.data); modern.templates = seedData().templates;
+  const third = await f.request('/api/workspace?space=main', { method: 'PUT', cookie: alice.cookie, body: { expectedRevision: 2, data: modern } });
+  assert.equal(third.status, 200); assert.deepEqual(third.data.data.templates, modern.templates);
 });
 
 test('workspace CAS, concurrent writers, tenant and layout-space isolation', async t => {

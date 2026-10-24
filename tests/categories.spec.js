@@ -62,9 +62,20 @@ test('custom project categories support creation, assignment, rename, deletion a
   await expect(page.locator('.mr-route-line')).toHaveCount(1);
   await page.reload();
   await expect(page.locator('.mr-route-line')).toContainText('归类项目');
-  await page.goto('/#projects/project/p1');
-  await page.getByRole('combobox', { name: '项目分类', exact: true }).selectOption('工作 / 个人');
-  await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
+  await page.goto('/#projects');
+  // Moving an existing project between categories is available in the wide sidebar.
+  const viewport = page.viewportSize();
+  if (mobile) await page.setViewportSize({ width: 1024, height: viewport.height });
+  const expand = page.locator('[data-nav-expand="projects"]');
+  if (await expand.getAttribute('aria-expanded') !== 'true') await expand.click();
+  const categories = ['', ...await page.locator('#nav-children-projects > [data-order-category]').evaluateAll(rows => rows.map(row => row.dataset.orderCategory))];
+  const from = categories.indexOf((await readData(page)).projects.find(project => project.id === 'p1').tag);
+  const destination = categories.indexOf('工作 / 个人');
+  for (let index = from; index !== destination; index += Math.sign(destination - from)) {
+    await page.locator('[data-sidebar-project="p1"]').press(destination > from ? 'Alt+ArrowRight' : 'Alt+ArrowLeft');
+  }
+  await expect.poll(async () => (await readData(page)).projects.find(project => project.id === 'p1').tag).toBe('工作 / 个人');
+  if (mobile) await page.setViewportSize(viewport);
   await chooseCategory(page, 'projects', '工作 / 个人', mobile);
   await expect(page.locator('.mr-route-line')).toHaveCount(2);
   for (const view of ['board', 'table', 'route']) {

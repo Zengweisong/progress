@@ -220,8 +220,15 @@ export function createSyncAPI({
       return await new Promise((resolveHash, reject) => scrypt(password, salt, 32, SCRYPT_OPTIONS, (error, hash) => error ? reject(error) : resolveHash(hash)));
     } finally { activeHashes--; }
   }
-  function envelope(userId, row) {
-    return { userId, revision: row?.revision ?? 0, data: row ? JSON.parse(row.data) : null, updatedAt: row?.updated_at ?? null };
+  function workspaceResponse(req, value) {
+    if (req.headers['x-shixu-templates'] === '1' || !value.data) return value;
+    // Older clients discard unknown root collections during their three-way
+    // merge. Returning templates to them would trigger endless upload retries.
+    const { templates, ...data } = value.data;
+    return { ...value, data };
+  }
+  function envelope(userId, row, req) {
+    return workspaceResponse(req, { userId, revision: row?.revision ?? 0, data: row ? JSON.parse(row.data) : null, updatedAt: row?.updated_at ?? null });
   }
   function workspaceSpace(url) {
     const space = url.searchParams.get('space') || 'main';
@@ -295,7 +302,7 @@ export function createSyncAPI({
       }
       const user = requireUser(req);
       const space = workspaceSpace(url);
-      if (req.method === 'GET') { send(res, 200, envelope(user.id, sql.workspace.get(user.id, space))); return true; }
+      if (req.method === 'GET') { send(res, 200, envelope(user.id, sql.workspace.get(user.id, space), req)); return true; }
       const body = await readJSON(req, WORKSPACE_LIMIT);
       if (body.expectedUserId !== user.id) {
         throw new APIError(409, '登录账号已发生变化，请刷新页面确认账号后再同步', 'account_changed');
@@ -309,8 +316,11 @@ export function createSyncAPI({
       try {
         const current = sql.workspace.get(user.id, space);
         if ((current?.revision ?? 0) !== body.expectedRevision) {
-          throw new APIError(409, '版本已更新，请重试', 'revision_conflict', { current: envelope(user.id, current) });
+          throw new APIError(409, '版本已更新，请重试', 'revision_conflict', { current: envelope(user.id, current, req) });
         }
+        // Older clients do not send common-template records. Their note edits
+        // must not replace customized templates with the built-in defaults.
+        if (current && body.data.templates === undefined) data.templates = validateWorkspace(JSON.parse(current.data)).templates;
         const nextRevision = body.expectedRevision + 1;
         const timestamp = new Date().toISOString();
         const serialized = JSON.stringify(data);
@@ -322,7 +332,7 @@ export function createSyncAPI({
         db.exec('COMMIT');
         result = { userId: user.id, revision: nextRevision, data, updatedAt: timestamp };
       } catch (error) { db.exec('ROLLBACK'); throw error; }
-      send(res, 200, result);
+      send(res, 200, workspaceResponse(req, result));
     } catch (error) {
       if (error instanceof APIError) {
         if (error.extra.retryAfter) res.setHeader('Retry-After', String(error.extra.retryAfter));

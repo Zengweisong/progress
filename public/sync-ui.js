@@ -51,7 +51,7 @@ export function createSyncUI(client, { space = 'main' } = {}) {
       }
     }
     const field = (label, value) => `<div class="sync-record-field"><dt>${esc(label)}</dt><dd>${esc(value === '' || value === undefined || value === null ? '未填写' : value)}</dd></div>`;
-    const names = { projects: '项目', notes: '笔记', fields: '自定义属性', folders: '二级分类' };
+    const names = { projects: '项目', notes: '笔记', fields: '自定义属性', folders: '二级分类', templates: '常用模板' };
     const statusNames = { planned: '待开始', active: '进行中', review: '待回顾', done: '已完成' };
     const priorityNames = { high: '高优先级', medium: '中优先级', low: '低优先级' };
     const typeNames = { text: '文本', number: '数字', date: '日期', checkbox: '复选框' };
@@ -62,7 +62,7 @@ export function createSyncUI(client, { space = 'main' } = {}) {
       if (item.collection === 'projects') {
         const customKeys = [...new Set([...Object.keys(item.local?.custom || {}), ...Object.keys(item.remote?.custom || {})])];
         const custom = customKeys.map((key, index) => field(fieldNames.get(key) || `自定义属性 ${index + 1}`, typeof record.custom?.[key] === 'boolean' ? record.custom[key] ? '已勾选' : '未勾选' : record.custom?.[key])).join('');
-        const tasks = (record.tasks || []).map(task => `<li class="${task.done ? 'is-done' : ''}"><span aria-label="${task.done ? '已完成' : '未完成'}">${task.done ? '✓' : '○'}</span><span>${esc(task.title)}</span></li>`).join('');
+        const tasks = (record.tasks || []).map(task => `<li class="${task.done ? 'is-done' : ''}"><span aria-label="${task.done ? '已完成' : '未完成'}">${task.done ? '✓' : '○'}</span><span>${esc(task.title)}${task.description ? `<br><span class="sync-task-description" aria-label="任务详细说明">${esc(task.description).replace(/\r\n?|\n/g, '<br>')}</span>` : ''}</span></li>`).join('');
         return `<dl class="sync-record">${field('项目名称', record.title)}${field('说明', record.description)}${field('状态', statusNames[record.status] || '未设状态')}${field('优先级', priorityNames[record.priority] || '未设优先级')}${field('分类', record.tag)}${field('截止日期', record.due)}${field('置顶', record.pinned ? '已置顶' : '未置顶')}${field('颜色 / 图标', `${colorNames[record.color] || '默认颜色'} / ${iconNames[record.icon] || '默认图标'}`)}${custom}<div class="sync-record-field"><dt>任务清单</dt><dd>${tasks ? `<ul class="sync-record-tasks">${tasks}</ul>` : '暂无任务'}</dd></div></dl>`;
       }
       if (item.collection === 'notes') {
@@ -70,6 +70,7 @@ export function createSyncUI(client, { space = 'main' } = {}) {
         return `<dl class="sync-record">${field('笔记标题', record.title)}${field('正文', record.body)}${field('标签', (record.tags || []).join('、') || '无标签')}${field('分类', record.category)}${field('收藏', (record.favorite ?? record.inbox) ? '已收藏' : '未收藏')}${field('关联项目', related.join('、') || '未关联项目')}</dl>`;
       }
       if (item.collection === 'fields') return `<dl class="sync-record">${field('属性名称', record.name)}${field('属性类型', typeNames[record.type] || '未设类型')}</dl>`;
+      if (item.collection === 'templates') return `<dl class="sync-record">${field('模板名称', record.title)}${field('简介', record.description)}${field('正文', record.body)}</dl>`;
       if (item.collection === 'folders') return `<dl class="sync-record">${field('分类名称', record.name)}${field('所属位置', { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹' }[record.section])}</dl>`;
       return `<dl class="sync-record">${field('内容', record.title || record.name || '记录已修改')}</dl>`;
     }

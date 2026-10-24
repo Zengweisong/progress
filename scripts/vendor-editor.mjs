@@ -8,7 +8,7 @@ await mkdir(target, { recursive: true });
 const result = await build({
   stdin: { contents: `export { EditorState, StateField, EditorSelection, Transaction } from '@codemirror/state';
 export { EditorView, Decoration, WidgetType, keymap, placeholder, drawSelection } from '@codemirror/view';
-export { history, historyKeymap, defaultKeymap, indentWithTab } from '@codemirror/commands';
+export { history, historyKeymap, defaultKeymap, indentWithTab, isolateHistory } from '@codemirror/commands';
 export { markdown, markdownKeymap } from '@codemirror/lang-markdown';
 export { syntaxTree, syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language';
 export { StateEffect } from '@codemirror/state';

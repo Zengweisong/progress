@@ -38,7 +38,9 @@ test('modules have separate routes, local numbering, empty state and independent
 
 test('detail pickers support keyboard selection and Escape closes the picker before the dialog', async ({ page }) => {
   await page.locator('.mr-dock-title').click();
-  const status = page.getByRole('combobox', { name: '项目状态', exact: true });
+  await expect(page.getByRole('combobox', { name: '项目状态', exact: true })).toHaveCount(0);
+  await expect(page.locator('#project-priority,#project-due,#project-tag')).toHaveCount(0);
+  const status = page.getByRole('combobox', { name: /的任务状态$/ }).first();
   await expect(status).toHaveClass(/project-select/);
   await status.click();
   await page.keyboard.press('Escape');
@@ -48,10 +50,9 @@ test('detail pickers support keyboard selection and Escape closes the picker bef
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect(status).toHaveValue('active');
-  await status.selectOption('review');
-  await expect(status).toHaveValue('review');
-  await expect(page.locator('#project-priority selectedcontent .select-indicator')).toHaveCount(1);
-  await page.getByRole('combobox', { name: /的任务状态$/ }).first().selectOption('active');
+  await status.selectOption('done');
+  await expect(status).toHaveValue('done');
+  await expect(status.locator('selectedcontent .select-indicator')).toHaveCount(1);
   await page.screenshot({ path: `.tools/detail-selects-${test.info().project.name}.png`, fullPage: true });
   await status.click();
   await page.screenshot({ path: `.tools/open-select-${test.info().project.name}.png` });
@@ -59,7 +60,7 @@ test('detail pickers support keyboard selection and Escape closes the picker bef
   await page.keyboard.press('Escape');
   await expect(page.locator('.project-detail')).toHaveCount(0);
   await page.reload(); await page.locator('.mr-dock-title').click();
-  await expect(status).toHaveValue('review');
+  await expect(status).toHaveValue('done');
 });
 
 test('each module keeps its own horizontal scroll position when the workspace renders again', async ({ page }) => {

@@ -49,6 +49,11 @@ select.project-select.module-task-status:focus-visible { border-color: #84aa98; 
 .capture-module-label select { min-width: 0; flex: 1; min-height: 28px; border: 0; background: none; color: var(--ink); font: inherit; font-size: 11px; }
 .project-detail .project-modules { margin-top: 12px; }
 .project-detail .module-task-title { color: var(--ink); }
+.project-detail .module-grid { grid-template-columns: minmax(0, 1fr); }
+.module-task-description { grid-column: 3 / -1; width: 100%; min-width: 0; min-height: 36px; margin: 0 0 8px; padding: 5px 8px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ink); }
+.module-task-description:hover { border-color: var(--line); }
+.module-task-description:focus-within { border-color: var(--primary); background: var(--paper, #fff); }
+#task-edit-form .task-description-input { min-height: 150px; line-height: 1.8; }
 @media (max-width: 1300px) { .module-project .module-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 700px) {
   .module-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }

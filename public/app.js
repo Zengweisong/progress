@@ -13,12 +13,15 @@ import { createSyncUI, syncButton } from './sync-ui.js';
 import { renderRoute } from './layouts-matrix-route.js';
 import { renderNotePage } from './note-editor.js';
 import { createLiveNoteEditor } from './live-note-editor.js';
+import { createDescriptionEditors } from './description-editors.js';
 import { portableMarkdown } from './note-images.js';
-import { blankNoteTitle, noteTemplates, renderTemplateCards } from './note-templates.js';
+import { blankNoteTitle, noteTemplates, commonTemplates, moveCommonTemplate, importCommonTemplates, renderTemplateCards } from './note-templates.js';
+import { installTemplateDrag } from './template-drag.js';
 import { hydrateWorkspace, persistAttachments, serializeWorkspace, WORKSPACE_BYTES } from './workspace-storage.js';
 import { archiveWorkspace, getTrashEntries, getRecoveryEntry, deleteRecovery, getSyncMeta } from './sync-db.js';
 import { deletedRecord, removeRecord, restoreRecord } from './recycle-bin.js';
 import { searchWorkspace, highlightText } from './workspace-search.js';
+import { workspaceChange, undoWorkspaceChange } from './workspace-undo.js';
 
 const icons = {
   logo: '<path d="M4 4h10v4H8v8h6v4H4zM18 4h3v16h-3zM11 11h9v3h-9z" fill="currentColor" stroke="none"/>',
@@ -97,6 +100,28 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let data, lastDisk = null, storageError = '', toastTimer, modal = null, syncClient, syncUI;
 let saveGeneration = 0, trashBusy = false, undoTrashId = null, searchType = 'all', searchTarget = null;
 let trashRecords = [];
+const undoSteps = [];
+let undoBusy = false;
+function rememberUndo(step) {
+  undoSteps.push({ owner: syncClient?.getStatus().ownerId ?? null, ...step });
+  if (undoSteps.length > 50) undoSteps.shift();
+}
+function rememberChange(before, after, label, group = null) {
+  const patches = workspaceChange(before, after);
+  if (!patches.length) return;
+  const last = undoSteps.at(-1);
+  if (group && last?.group === group) {
+    for (const patch of patches) {
+      const existing = last.patches.find(item => JSON.stringify(item.path) === JSON.stringify(patch.path));
+      if (existing) existing.after = patch.after; else last.patches.push(patch);
+    }
+    last.patches = last.patches.filter(patch => JSON.stringify(patch.before) !== JSON.stringify(patch.after));
+    if (!last.patches.some(patch => !patch.timestamp)) undoSteps.pop();
+  } else rememberUndo({ patches, label, group });
+}
+function forgetTrashUndo(id) {
+  for (let index = undoSteps.length - 1; index >= 0; index--) if (undoSteps[index].trashId === id) undoSteps.splice(index, 1);
+}
 const recentKey = 'shixu.recent-records.v1';
 let recentRecords = [];
 try { const recent = JSON.parse(localStorage.getItem(recentKey) || '[]'); if (Array.isArray(recent)) recentRecords = recent.slice(0, 20); } catch { /* Recents are optional device preferences. */ }
@@ -173,9 +198,10 @@ async function deleteToTrash(kind, id, projectId) {
     const previous = data; data = structuredClone(data);
     removeRecord(data, item);
     if (!save()) { data = previous; return; }
+    rememberUndo({ trashId: archived.id, owner: context.owner });
     modal = null;
     if (kind !== 'task') closeDrawer();
-    render(); toast('已移到本机回收站。', archived.id);
+    render(); toast('已移到本机回收站，可按 Ctrl / ⌘ Z 撤销。', archived.id);
   } catch (error) { toast(error.message || '恢复副本保存失败，记录尚未删除。'); }
   finally { trashBusy = false; }
 }
@@ -199,6 +225,7 @@ async function restoreTrash(id) {
     await assertTrashContext(context);
     const previous = data; data = next;
     if (!save()) { data = previous; return; }
+    forgetTrashUndo(id);
     // Keeping an already restored entry after an IndexedDB cleanup failure is
     // harmless; the list hides existing IDs and restoration never overwrites.
     try { await deleteRecovery(id); } catch { /* The restored record is durable. */ }
@@ -209,14 +236,33 @@ async function restoreTrash(id) {
   } catch (error) { toast(error.message || '恢复失败，请重试。'); }
   finally { trashBusy = false; }
 }
-function saveTaskChange(project, change) {
+function saveTaskChange(project, change, label = '事项修改', group = null) {
   if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return false; }
   const previous = structuredClone(project);
   change();
-  if (save(project)) return true;
+  if (save(project)) { rememberChange({ projects: [previous] }, { projects: [project] }, label, group); return true; }
   for (const key of Object.keys(project)) delete project[key];
   Object.assign(project, previous);
   return false;
+}
+async function undoLastOperation() {
+  if (undoBusy || trashBusy || storageError || !undoSteps.length || taskDrag.isDragging() || recordDrag.isDragging() || templateDrag.isDragging() || datePicker.isOpen() || liveEditor.isBusy()) return;
+  undoBusy = true;
+  try {
+    const step = undoSteps.at(-1), context = await trashContext();
+    await assertTrashContext(context);
+    if (context.transition || context.owner !== step.owner) throw new Error('工作区已切换，请重新加载后操作。');
+    if (undoSteps.at(-1) !== step) return;
+    if (step.trashId) { await restoreTrash(step.trashId); return; }
+    const next = validateData(undoWorkspaceChange(data, step.patches));
+    const previous = data; data = next;
+    if (!save()) { data = previous; return; }
+    undoSteps.pop(); routeState.projectOrder = null;
+    render();
+    if (step.templateNoteId) liveEditor.isolateUndo();
+    toast(`已撤销${step.label}。`);
+  } catch (error) { toast(error.message || '撤销失败，请重试。'); }
+  finally { undoBusy = false; }
 }
 const getProject = id => data.projects.find(p => p.id === id);
 const getNote = id => data.notes.find(n => n.id === id) || (noteCreation?.note.id === id ? noteCreation.note : undefined);
@@ -272,6 +318,9 @@ function applyNoteTemplate(template) {
   if (!note.tags.length) note.tags = [...(template.tags || [])];
   if (template.attachments) note.attachments = structuredClone(template.attachments);
   if (!save(note)) { Object.keys(note).forEach(key => delete note[key]); Object.assign(note, previous); return; }
+  const patches = workspaceChange({ notes: [previous] }, { notes: [note] });
+  if (patches.length) rememberUndo({ patches, label: '使用模板', templateNoteId: note.id, templateBody: note.body });
+  liveEditor.isolateUndo();
   modal = null; render();
   $('#note-body')?.focus({ preventScroll: true });
 }
@@ -467,7 +516,7 @@ function newNotePage() {
     const current = route(), favorite = current.section === 'inbox';
     noteCreation = { path: location.hash, note: { id: uid(), title: '', body: '', summary: '', category: defaultNoteCategory(favorite), tags: [], inbox: false, favorite, projectIds: getProject(current.id) ? [current.id] : [], updatedAt: new Date().toISOString() } };
   }
-  return renderNotePage({ note: noteCreation.note, esc, icon, fullWidth: noteFullWidth, creating: true });
+  return renderNotePage({ note: noteCreation.note, notes: data.notes, templates: data.templates, esc, icon, fullWidth: noteFullWidth, creating: true });
 }
 function applyNoteWidth() {
   $('.note-workspace')?.classList.toggle('is-full-width', noteFullWidth);
@@ -507,13 +556,8 @@ function projectDrawer(p) {
   const notes = data.notes.filter(n => n.projectIds.includes(p.id));
   return `<aside class="drawer project-detail" role="dialog" aria-modal="true" aria-label="项目详情：${esc(p.title)}" ${modal ? 'inert' : ''}>
     <div class="drawer-toolbar"><button class="icon-button" data-action="close-drawer" aria-label="关闭项目详情">${icon('back')}</button><span class="small-label">项目详情</span><button class="icon-button ${p.pinned ? 'pin-active' : ''}" data-action="toggle-pin" data-id="${esc(p.id)}" aria-label="${p.pinned ? '取消置顶' : '置顶项目'}" aria-pressed="${p.pinned}">${icon('pin')}</button><button class="icon-button" data-action="close-drawer" aria-label="关闭">${icon('close')}</button></div>
-    <div class="drawer-scroll"><div class="drawer-header"><div class="project-icon ${esc(p.color)}">${icon(p.icon)}</div><input class="editable-title" id="project-title" data-edit-project="title" maxlength="200" value="${esc(p.title)}" aria-label="项目标题" required><textarea class="editable-description" id="project-description" data-edit-project="description" maxlength="20000" aria-label="项目说明">${esc(p.description)}</textarea></div>
-    <div class="properties"><div class="property-row"><span class="property-label">${icon('progress')}项目状态</span>${renderSelect({ esc, options: statuses.map(s => [s.id, s.label]), value: p.status, kind: "status", attributes: 'id="project-status" data-edit-project="status" aria-label="项目状态"' })}</div>
-    <div class="property-row"><span class="property-label">${icon('flag')}优先级</span>${renderSelect({ esc, options: Object.entries(priorities), value: p.priority, kind: "priority", attributes: 'id="project-priority" data-edit-project="priority" aria-label="优先级"' })}</div>
-    <div class="property-row"><span class="property-label">${icon('calendar')}截止日期</span>${renderDateInput({ esc, icon, id: 'project-due', value: p.due, label: '截止日期', attributes: 'data-edit-project="due"' })}</div>
-    <div class="property-row"><span class="property-label">${icon('tag')}项目分类</span>${renderSelect({ esc, options: categoryOptions('projects'), value: p.tag, kind: "", attributes: 'id="project-tag" data-edit-project="tag" aria-label="项目分类"' })}</div>
-    ${data.fields.map(f => `<div class="property-row"><label class="property-label" for="field-${esc(f.id)}">${icon('tag')}${esc(f.name)}</label><input id="field-${esc(f.id)}" data-custom-field="${esc(f.id)}" type="${{ text: 'text', number: 'number', date: 'date', checkbox: 'checkbox' }[f.type]}" ${f.type === 'checkbox' ? (p.custom[f.id] ? 'checked' : '') : `value="${esc(p.custom[f.id] ?? '')}" maxlength="500"`} ${f.type === 'number' ? 'step="any"' : ''}></div>`).join('')}</div>
-    <div class="section-heading">${icon('checkCircle')}项目任务<span>${p.tasks.filter(t => t.done).length}/${p.tasks.length}</span></div><div class="progress-meta"><span>任务完成进度</span><strong>${p.tasks.length ? `${progress(p)}%` : '暂无任务'}</strong></div><div class="progress-track"><div class="progress-fill" style="width:${progress(p)}%"></div></div>
+    <div class="drawer-scroll"><div class="drawer-header"><div class="project-icon ${esc(p.color)}">${icon(p.icon)}</div><input class="editable-title" id="project-title" data-edit-project="title" maxlength="200" value="${esc(p.title)}" aria-label="项目标题" required><div id="project-description-editor" class="project-description-editor live-note-editor description-editor" data-description-editor data-project-id="${esc(p.id)}"></div></div>
+    <div class="section-heading">${icon('checkCircle')}项目任务<span>${p.tasks.filter(t => t.done).length}/${p.tasks.length}</span></div>
     ${renderProjectTasks(p, { esc, icon, scope: 'detail' })}
     <div class="section-heading">${icon('book')}关联知识<span>${notes.length} 篇</span><button class="button small subtle" data-action="link-notes" data-id="${esc(p.id)}">${icon('link')}关联笔记</button></div>
     ${notes.map(n => `<button class="linked-note" data-note="${esc(n.id)}">${icon('note')}<span class="linked-note-info"><strong>${esc(n.title)}</strong><small>${esc(n.category)}${isNoteFavorite(n) ? ' · 已收藏' : ''}</small></span>${icon('chevron')}</button>`).join('') || '<p class="drawer-muted">关联一篇笔记，让项目和知识连接起来。</p>'}<button class="button small subtle" data-action="project-new-note" data-id="${esc(p.id)}">${icon('plus')}为此项目新建笔记</button>
@@ -530,9 +574,10 @@ function selectField(label, name, options, value) {
 function modalMarkup() {
   if (!modal) return '';
   if (modal.type === 'note-templates') {
-    const templates = noteTemplates(data.notes), custom = templates.filter(template => template.key.startsWith('note:'));
-    return modalShell(modal.apply ? '选择页面模板' : '从模板新建', `<p class="modal-subtitle">${modal.apply ? '选择模板，开始这篇空白页面。' : '选择模板，创建一份独立的页面副本。'}</p><h3 class="note-template-heading">常用模板</h3><div class="note-template-grid">${renderTemplateCards(templates.filter(template => template.key.startsWith('builtin:')), esc, 'select-note-template')}</div><h3 class="note-template-heading">我的模板</h3>${custom.length ? `<div class="note-template-grid">${renderTemplateCards(custom, esc, 'select-note-template')}</div>` : '<p class="note-template-empty">在任意页面点击“设为模板”，就能在这里重复使用。</p>'}`);
+    const templates = noteTemplates(data.notes, data.templates), custom = templates.filter(template => template.key.startsWith('note:'));
+    return modalShell(modal.apply ? '选择页面模板' : '从模板新建', `<p class="modal-subtitle">${modal.apply ? '选择模板，开始这篇空白页面。' : '选择模板，创建一份独立的页面副本。'}</p><h3 class="note-template-heading">常用模板</h3><div class="note-template-grid">${renderTemplateCards(templates.filter(template => template.key.startsWith('builtin:')), esc, 'select-note-template', true)}</div><h3 class="note-template-heading">我的模板</h3>${custom.length ? `<div class="note-template-grid">${renderTemplateCards(custom, esc, 'select-note-template')}</div>` : '<p class="note-template-empty">在任意页面点击“设为模板”，就能在这里重复使用。</p>'}`);
   }
+  if (modal.type === 'edit-template') return modalShell('编辑常用模板', `<form id="template-edit-form"><label class="form-field"><span>模板名称</span><input name="title" maxlength="200" value="${esc(modal.draft.title)}" required autocomplete="off"></label><label class="form-field"><span>模板简介</span><input name="description" maxlength="500" value="${esc(modal.draft.description)}" autocomplete="off"></label><div class="form-field"><span id="template-body-label">Markdown 正文</span><div id="common-template-editor" class="common-template-editor live-note-editor description-editor" aria-labelledby="template-body-label"></div></div>${formActions('保存模板')}</form>`);
   if (modal.type === 'module') {
     const project = getProject(modal.projectId), module = project?.modules?.find(item => item.id === modal.id);
     if (!project) return '';
@@ -547,7 +592,7 @@ function modalMarkup() {
     const project = getProject(modal.projectId), task = project?.tasks.find(item => item.id === modal.id);
     if (!task) return '';
     const siblings = project.tasks.filter(item => !item.archived && (item.moduleId || '') === (task.moduleId || ''));
-    return modalShell('编辑任务', `<form id="task-edit-form"><label class="form-field"><span>任务名称</span><input name="title" maxlength="500" value="${esc(task.title)}" required autocomplete="off"></label>${selectField('所属模块', 'moduleId', moduleOptions(project), task.moduleId || '')}${selectField('任务状态', 'taskStatus', Object.entries(taskStates), taskStatus(task))}${selectField('排列位置', 'position', siblings.map((item, index) => [String(index), `第 ${index + 1} 项`]), String(siblings.indexOf(task)))}<button type="button" class="button small subtle" data-action="${task.archived ? 'restore-task' : 'archive-task'}" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}">${task.archived ? '恢复事项' : '归档事项'}</button><button type="button" class="danger-link" data-action="delete-task" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}">${icon('trash')}删除任务</button>${formActions('保存修改')}</form>`);
+    return modalShell('编辑任务', `<form id="task-edit-form"><label class="form-field"><span>任务名称</span><input name="title" maxlength="500" value="${esc(task.title)}" required autocomplete="off"></label><label class="form-field"><span>详细说明</span><textarea name="description" class="task-description-input" rows="6" maxlength="20000" placeholder="写下要做什么、具体步骤，或完成的标准…">${esc(task.description || '')}</textarea></label>${selectField('所属模块', 'moduleId', moduleOptions(project), task.moduleId || '')}${selectField('任务状态', 'taskStatus', Object.entries(taskStates), taskStatus(task))}${selectField('排列位置', 'position', siblings.map((item, index) => [String(index), `第 ${index + 1} 项`]), String(siblings.indexOf(task)))}<button type="button" class="button small subtle" data-action="${task.archived ? 'restore-task' : 'archive-task'}" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}">${task.archived ? '恢复事项' : '归档事项'}</button><button type="button" class="danger-link" data-action="delete-task" data-project-id="${esc(project.id)}" data-id="${esc(task.id)}">${icon('trash')}删除任务</button>${formActions('保存修改')}</form>`);
   }
   if (modal.type === 'category') return modalShell(modal.previousName === null ? '新建二级分类' : '编辑二级分类', `<p class="modal-subtitle">归属位置：${esc(sectionNames[modal.section])}</p><form id="category-form"><label class="form-field"><span>分类名称</span><input name="name" id="create-title" maxlength="60" value="${esc(modal.previousName === '' ? '未分类' : modal.previousName || '')}" placeholder="例如：工作、学习、生活" required autocomplete="off"></label>${modal.previousName === null ? '' : '<button type="button" class="danger-link category-delete" data-action="delete-category">删除分类</button>'}${formActions(modal.previousName === null ? '创建分类' : '保存修改')}</form>`);
   if (modal.type === 'confirm-category-delete') return modalShell('删除这个分类？', `<p class="body-copy">删除「${esc(modal.previousName || '未分类')}」分类后，内容和关联都会保留。${modal.previousName === '' ? '文章直接列在侧栏，不再显示这个分类。' : '其中的项目或笔记将取消分类。'}</p><div class="form-actions"><button type="button" class="button" data-action="close-modal">取消</button><button type="button" class="button danger" data-action="confirm-delete-category">删除分类</button></div>`);
@@ -564,7 +609,7 @@ function modalMarkup() {
     return modalShell('关联项目', `<form id="link-projects-form"><div class="check-list">${data.projects.map(p => `<label class="check-item"><input type="checkbox" name="projects" value="${esc(p.id)}" ${n?.projectIds.includes(p.id) ? 'checked' : ''}>${icon(p.icon)}${esc(p.title)}</label>`).join('') || '<p class="drawer-muted">先创建一个项目，再来建立关联。</p>'}</div>${formActions('保存关联')}</form>`);
   }
   if (modal.type === 'settings') return modalShell('数据与备份', `<p class="modal-subtitle">记录自动保存在本机。登录账号可启用多端同步，也可以随时导出备份。</p>${storageError ? `<div class="notice" role="alert">${esc(storageError)}。请先导出当前内容再重新加载，以免丢失尚未保存的编辑。</div>` : ''}<div class="data-actions"><button class="data-action" data-action="export">${icon('download')}<span><strong>导出完整数据</strong><small>JSON 格式 · 包含项目、任务、笔记和关联</small></span>${icon('chevron')}</button><button class="data-action" data-action="import">${icon('upload')}<span><strong>导入为独立副本</strong><small>保留现有内容，使用新的记录 ID 导入</small></span>${icon('chevron')}</button><button class="data-action" data-action="trash">${icon('trash')}<span><strong>本机回收站</strong><small>恢复误删的项目、任务和笔记</small></span>${icon('chevron')}</button><button class="data-action" data-action="help">${icon('help')}<span><strong>使用与快捷键</strong><small>了解当前原型可以体验的功能</small></span>${icon('chevron')}</button></div><p class="modal-subtitle" style="margin:20px 0 0">当前有 ${data.projects.length} 个项目、${data.notes.length} 篇笔记。<br>清理浏览器数据可能移除本地内容，请定期导出。</p><input type="file" id="import-file" accept=".json,application/json" hidden>`);
-  if (modal.type === 'help') return modalShell('从一个小进展开始', `<p class="body-copy">项目卡片可以拖动。打开项目后，可以更新状态、完成任务，并把已有笔记关联进来。知识库中的同一篇笔记可以关联多个项目。</p><div class="notice">项目、任务和笔记自动保存在本机。在“账号与多端同步”中登录并连接工作区后，修改会自动上传，页面每 15 秒检查其他设备的更新。编辑中或有未保存草稿时暂缓同步；断网可继续记录，联网后自动重试。自定义属性在表格视图添加。笔记支持插入、粘贴和拖入图片；删除后可从本机回收站恢复。</div><div class="help-shortcuts"><span>搜索全部内容</span><kbd>Ctrl / ⌘ K</kbd><span>快速记下想法</span><kbd>N</kbd><span>关闭当前弹窗或详情</span><kbd>Esc</kbd></div>`);
+  if (modal.type === 'help') return modalShell('从一个小进展开始', `<p class="body-copy">项目卡片可以拖动。打开项目后，可以更新状态、完成任务，并把已有笔记关联进来。知识库中的同一篇笔记可以关联多个项目。</p><div class="notice">项目、任务和笔记自动保存在本机。在“账号与多端同步”中登录并连接工作区后，修改会自动上传，页面每 15 秒检查其他设备的更新。编辑中或有未保存草稿时暂缓同步；断网可继续记录，联网后自动重试。自定义属性在表格视图添加。笔记支持插入、粘贴和拖入图片；删除后可从本机回收站恢复。</div><div class="help-shortcuts"><span>搜索全部内容</span><kbd>Ctrl / ⌘ K</kbd><span>快速记下想法</span><kbd>N</kbd><span>保存当前内容</span><kbd>Ctrl / ⌘ S</kbd><span>撤销删除、排序和事项修改</span><kbd>Ctrl / ⌘ Z</kbd><span>关闭当前弹窗或详情</span><kbd>Esc</kbd></div>`);
   if (modal.type === 'trash') return modalShell('本机回收站', `<p class="body-copy">当前设备与工作区的删除副本。恢复后可以继续同步；其他设备的回收站独立保存。</p><div class="trash-list">${trashRecords.map(item => `<div class="trash-row"><div><strong>${esc(item.label)}</strong><small>${{ project: '项目（含任务）', note: '笔记', task: '任务' }[item.data.kind]} · ${esc(new Date(item.createdAt).toLocaleString('zh-CN'))}</small></div><div class="trash-actions"><button type="button" class="button small" data-action="restore-trash" data-id="${esc(item.id)}" aria-label="恢复：${esc(item.label)}">恢复</button><button type="button" class="danger-link" data-action="delete-trash" data-id="${esc(item.id)}" aria-label="永久删除：${esc(item.label)}">永久删除</button></div></div>`).join('') || '<p class="body-copy">回收站为空。</p>'}</div>`);
   if (modal.type === 'confirm-purge') return modalShell('永久删除恢复副本？', `<p class="body-copy">这条本机恢复副本将被永久删除，之后无法通过回收站恢复。</p><div class="form-actions"><button class="button" data-action="trash">返回回收站</button><button class="button danger" data-action="confirm-purge">永久删除</button></div>`);
   if (modal.type === 'confirm-delete') return modalShell(`删除${modal.kind === 'project' ? '项目' : '笔记'}`, `<p class="body-copy">确定删除「${esc(modal.title)}」吗？${modal.kind === 'project' ? '项目内的任务会一起删除，关联笔记仍保留在知识库中。' : '笔记将从所有关联项目中移除。'}删除前会保存本机恢复副本，可在“数据与备份 → 本机回收站”恢复。</p><div class="form-actions"><button class="button" data-action="close-modal">取消</button><button class="button danger" data-action="confirm-delete">确认删除</button></div>`);
@@ -617,6 +662,8 @@ function wirePretext() {
   $$('[data-pretext]').forEach(el => { measureText(el); pretextObserver.observe(el); });
 }
 function render() {
+  descriptionEditors.preserveSelection();
+  const templateSelection = templateEditor.getSelection();
   sidebarCreateMenu.close();
   datePicker.close();
   const activeId = document.activeElement?.id;
@@ -631,19 +678,25 @@ function render() {
   const current = route(), project = current.kind === 'project' && getProject(current.id), note = current.kind === 'note' && getNote(current.id);
   rememberRecent(current);
   document.title = `拾序 · ${project?.title || note?.title || { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹' }[current.section]}`;
-  $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${current.kind === 'new-note' ? newNotePage() : note ? renderNotePage({ note, notes: data.notes, esc, icon, fullWidth: noteFullWidth }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
+  $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${current.kind === 'new-note' ? newNotePage() : note ? renderNotePage({ note, notes: data.notes, templates: data.templates, esc, icon, fullWidth: noteFullWidth }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
   sidebarControls.refresh();
   $('#overlay-root').innerHTML = `${project || modal ? '<div class="overlay" data-action="dismiss"></div>' : ''}${project ? projectDrawer(project) : ''}${modalMarkup()}`;
+  descriptionEditors.mount(document);
+  if (modal?.type === 'edit-template') { templateEditor.mount($('#common-template-editor'), { id: modal.id, body: modal.draft.body }); templateEditor.setSelection(templateSelection); }
+  else templateEditor.destroy();
   const editorNote = note || (current.kind === 'new-note' ? noteCreation?.note : null);
   if (editorNote) liveEditor.mount($('#live-note-editor'), editorNote);
   else liveEditor.destroy();
   $('#app').inert = Boolean(project || modal);
   document.body.style.overflow = project || modal ? 'hidden' : '';
   if ($('.drawer-scroll')) $('.drawer-scroll').scrollTop = scrollTop;
-  if (activeId && document.getElementById(activeId) && !document.getElementById(activeId).closest('[inert]')) document.getElementById(activeId).focus({ preventScroll: true });
-  if (captureSelection) document.getElementById(activeId)?.setSelectionRange(...captureSelection);
+  if (activeId && document.getElementById(activeId) && !document.getElementById(activeId).closest('[inert]')) {
+    if (activeId === 'template-body') templateEditor.focus();
+    else if (!descriptionEditors.focus(activeId)) document.getElementById(activeId).focus({ preventScroll: true });
+  }
   for (const scroll of $$('.mr-route-line .mr-stations-scroll')) scroll.scrollLeft = stationScroll.get(scrollKey(scroll)) || 0;
   $$('[data-task-add] input').forEach(input => { input.value = moduleTaskDrafts.get(input.id) || ''; });
+  if (captureSelection) document.getElementById(activeId)?.setSelectionRange(...captureSelection);
   if (activeStatus) $$('[data-task-status]').find(el => el.dataset.taskStatus === activeStatus && el.dataset.projectId === activeTaskProject && !el.closest('[inert]'))?.focus({ preventScroll: true });
   if (activeTask && activeTaskProject) $$('[data-task][data-project-id]').find(el => el.dataset.task === activeTask && el.dataset.projectId === activeTaskProject && !el.closest('[inert]'))?.focus({ preventScroll: true });
   requestAnimationFrame(wirePretext);
@@ -665,6 +718,10 @@ function showModal(type, options = {}) {
   requestAnimationFrame(() => { const target = $('.modal input:not([type=checkbox]):not([hidden])') || $('#modal-title') || $('.modal button'); target?.focus(); });
 }
 function dismissModal() {
+  if (modal?.type === 'edit-template') {
+    const id = modal.id; modal = modal.previous || null; render();
+    $$('[data-action="edit-common-template"]').find(button => button.dataset.id === id && !button.closest('[inert]'))?.focus(); return;
+  }
   const hadSearch = modal?.type === 'search'; modal = null; importCandidate = null; render();
   ($('.drawer .icon-button') || $('.note-back') || (hadSearch ? $('.top-actions [data-action=search]') : $('[data-action=new-project]')) || $('.mobile-nav .mobile-create'))?.focus({ preventScroll: true });
 }
@@ -769,6 +826,7 @@ document.addEventListener('click', async event => {
       try {
         removeCategory(data, section, modal.previousName, new Date().toISOString());
         if (!save()) { data = previous; render(); break; }
+        rememberChange(previous, data, '删除分类');
         const destination = modal.previousName === '' ? section : categoryPath(section, '');
         modal = null; navigate(destination); render();
       } catch (error) { data = previous; toast(error.message); }
@@ -788,15 +846,20 @@ document.addEventListener('click', async event => {
     case 'cancel-note-create': { const projectId = route().id; noteCreation = null; if (getProject(projectId)) openProject(projectId); else closeDrawer(); break; }
     case 'new-from-template': showModal('note-templates', { section: target.dataset.section || 'knowledge', category: target.dataset.name }); break;
     case 'note-template-picker': showModal('note-templates', { apply: true }); break;
+    case 'edit-common-template': {
+      const template = commonTemplates(data.templates).find(template => template.id === target.dataset.id);
+      if (template) showModal('edit-template', { id: template.id, draft: structuredClone(template), previous: modal ? structuredClone(modal) : null });
+      break;
+    }
     case 'select-note-template': {
-      const template = noteTemplates(data.notes).find(item => item.key === target.dataset.template);
+      const template = noteTemplates(data.notes, data.templates).find(item => item.key === target.dataset.template);
       if (!template) { toast('这个模板已不可用。'); break; }
       if (modal?.apply) applyNoteTemplate(template);
       else createNotePage(modal || {}, template);
       break;
     }
     case 'apply-note-template': {
-      const template = noteTemplates(data.notes).find(item => item.key === target.dataset.template);
+      const template = noteTemplates(data.notes, data.templates).find(item => item.key === target.dataset.template);
       if (template) applyNoteTemplate(template);
       break;
     }
@@ -890,7 +953,7 @@ document.addEventListener('click', async event => {
         const id = modal.id, context = await trashContext(), record = await getRecoveryEntry(id);
         if (!record || record.space !== 'main' || record.kind !== 'trash' || record.userId !== context.owner) throw new Error('当前工作区中找不到这条恢复记录。');
         await assertTrashContext(context);
-        await deleteRecovery(id); await openTrash(); toast('已永久移除这条本机恢复副本。');
+        await deleteRecovery(id); forgetTrashUndo(id); await openTrash(); toast('已永久移除这条本机恢复副本。');
       } catch (error) { toast(error.message); }
       break;
     }
@@ -915,6 +978,18 @@ document.addEventListener('submit', event => {
     render(); document.getElementById(input.id)?.focus({ preventScroll: true }); return;
   }
   switch (form.id) {
+    case 'template-edit-form': {
+      if (modal?.type !== 'edit-template' || storageError) break;
+      if (!title) { $('#form-error').textContent = '请填写模板名称。'; break; }
+      const previous = structuredClone(data.templates), template = data.templates.find(template => template.id === modal.id);
+      if (!template && data.templates.length >= 100) { $('#form-error').textContent = '模板数量已达上限，请先整理模板。'; break; }
+      const next = { ...(template || modal.draft), title, description: String(values.get('description') || ''), body: modal.draft.body, updatedAt: new Date().toISOString() };
+      delete next.key;
+      if (template) Object.assign(template, next); else data.templates.push(next);
+      if (!save()) { data.templates = previous; break; }
+      rememberChange({ templates: previous }, { templates: data.templates }, '编辑模板');
+      dismissModal(); toast('模板已保存。'); break;
+    }
     case 'module-form': {
       const p = getProject(modal.projectId), name = String(values.get('name') || '').trim();
       if (!p || storageError) break;
@@ -933,6 +1008,8 @@ document.addEventListener('submit', event => {
       if (saveTaskChange(p, () => {
         const moved = (task.moduleId || '') !== String(values.get('moduleId') || '');
         task.title = title; task.moduleId = String(values.get('moduleId') || '');
+        const description = String(values.get('description') || '');
+        if (description) task.description = description; else delete task.description;
         setTaskStatus(task, values.get('taskStatus'));
         const siblings = p.tasks.filter(item => item !== task && !item.archived && (item.moduleId || '') === task.moduleId);
         p.tasks = p.tasks.filter(item => item !== task);
@@ -976,6 +1053,7 @@ document.addEventListener('submit', event => {
 function summarize(body) { return body.replace(/!\[([^\[\]\n]*)\]\([^\n)]*\)/g, '$1').split('\n').filter(line => line.trim() && !line.startsWith('#')).join(' ').replace(/[*`>]/g, '').slice(0, 90); }
 document.addEventListener('input', event => {
   const el = event.target;
+  if (modal?.type === 'edit-template' && el.closest('#template-edit-form') && ['title', 'description'].includes(el.name)) modal.draft[el.name] = el.value;
   if (el.closest('[data-task-add]')) moduleTaskDrafts.set(el.id, el.value);
   if (el.matches('#project-form input[type=date]')) el.toggleAttribute('data-empty-date', !el.value);
   if (el.id === 'route-capture-body') { el.setCustomValidity(''); routeState.drafts.set(el.form.dataset.projectId || '', el.value); return; }
@@ -1000,7 +1078,6 @@ document.addEventListener('change', async event => {
     const p = getProject(route().id), key = el.dataset.editProject;
     if (p) { if (key === 'title' && !el.value.trim()) { el.value = p.title; toast('项目标题不能为空。'); return; } p[key] = el.value.trim(); save(p); document.title = `拾序 · ${p.title}`; if (key === 'title') refreshProjectNavTitle(p); if (key === 'tag') render(); }
   }
-  if (el.dataset.customField) { const p = getProject(route().id), f = data.fields.find(f => f.id === el.dataset.customField); if (p && f) { p.custom[f.id] = f.type === 'checkbox' ? el.checked : f.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value; save(p); } }
   if (el.dataset.editNote && el.dataset.editNote !== 'body') {
     const n = currentNote(), key = el.dataset.editNote;
     if (n === noteCreation?.note) return;
@@ -1015,7 +1092,7 @@ document.addEventListener('change', async event => {
   }
 });
 function exportData() {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(descriptionEditors.withDrafts(data), null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = `拾序备份-${new Date().toLocaleDateString('sv-SE')}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast('备份已生成，请在浏览器下载列表中查看。');
 }
 async function importData() {
@@ -1032,7 +1109,7 @@ async function importData() {
   }
   for (const n of incoming.notes) { n.id = uid(); n.title = `${n.title.slice(0, 194)}（导入）`; n.projectIds = n.projectIds.map(id => projectIds.get(id)); }
   const folders = incoming.folders.filter(folder => !data.folders.some(existing => existing.section === folder.section && existing.name === folder.name)).map(folder => ({ ...folder, id: uid() }));
-  const combined = { ...data, projects: [...data.projects, ...incoming.projects], notes: [...data.notes, ...incoming.notes], fields: [...data.fields, ...incoming.fields], folders: [...data.folders, ...folders] };
+  const combined = { ...data, projects: [...data.projects, ...incoming.projects], notes: [...data.notes, ...incoming.notes], fields: [...data.fields, ...incoming.fields], folders: [...data.folders, ...folders], templates: importCommonTemplates(data.templates, incoming.templates, uid) };
   try { validateData(combined); } catch { toast('导入后会超出原型容量，请减少备份中的记录或属性数量。'); return; }
   const previous = data; data = combined; const saved = save();
   if (!saved) { data = previous; return; }
@@ -1046,6 +1123,28 @@ document.addEventListener('focusout', event => {
   const control = event.target.closest('.note-create-control');
   if (control && !control.contains(event.relatedTarget)) control.classList.remove('is-dismissed');
 });
+document.addEventListener('keydown', event => {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return;
+  event.preventDefault(); event.stopPropagation();
+  if (event.repeat) return;
+  // Let the editor process pending input before saving, without moving focus.
+  setTimeout(() => {
+    if (storageError) { save(); return; }
+    if (trashBusy || undoBusy || taskDrag.isDragging() || recordDrag.isDragging() || templateDrag.isDragging()) { toast('正在保存当前操作，请稍候。'); return; }
+    if (liveEditor.isBusy()) { toast('图片正在处理，完成后会自动保存。'); return; }
+    const target = event.target.isConnected ? event.target : document.activeElement;
+    const form = target.closest?.('form') || (target.closest?.('#sync-dialog') ? null : $('.modal form'));
+    const emptyCapture = form?.id === 'route-capture-form' && !form.querySelector('textarea').value.trim();
+    const emptyTask = form?.hasAttribute('data-task-add') && !form.querySelector('input').value.trim();
+    if (!emptyCapture && !emptyTask && form?.matches('#project-form,#task-edit-form,#template-edit-form,#module-form,#category-form,#route-capture-form,#field-form,#view-form,#link-notes-form,#link-projects-form,[data-task-add]')) {
+      form.requestSubmit(); return;
+    }
+    if (route().kind === 'new-note') { createNote(); return; }
+    if (target.id === 'project-title' && !target.value.trim()) { toast('项目标题不能为空。'); target.focus(); return; }
+    if (save()) toast('已保存到本机。');
+  }, 0);
+}, true);
+
 document.addEventListener('keydown', event => {
   if (event.target.closest('#sync-dialog')) return;
   if (event.isComposing || event.keyCode === 229) return;
@@ -1062,6 +1161,8 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && CSS.supports('selector(select:open)') && event.target.closest('select')?.matches(':open')) return;
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && event.target.closest('#route-capture-form')) { event.preventDefault(); event.target.closest('form').requestSubmit(); return; }
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName) || event.target.isContentEditable;
+  const textEditing = event.target.closest('textarea,select,[contenteditable=true],input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])');
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'z' && !textEditing && (!modal || modal.type === 'note-templates')) { event.preventDefault(); void undoLastOperation(); return; }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchType = 'all'; showModal('search'); return; }
   if (modal?.type === 'search' && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
     const results = $$('#search-results .search-result'), index = results.indexOf(document.activeElement);
@@ -1089,7 +1190,7 @@ document.addEventListener('dragover', event => { const column = event.target.clo
 document.addEventListener('drop', event => {
   const column = event.target.closest('[data-drop]'); if (!column || !dragId) return; event.preventDefault();
   const p = getProject(dragId), key = data.preferences.group === 'priority' ? 'priority' : 'status';
-  if (p && p[key] !== column.dataset.drop) { p[key] = column.dataset.drop; const saved = save(p); if (saved) toast('项目分组已更新。'); }
+  if (p && p[key] !== column.dataset.drop) { const saved = saveTaskChange(p, () => { p[key] = column.dataset.drop; }, '项目分组'); if (saved) toast('项目分组已更新。'); }
   dragId = null; render();
 });
 document.addEventListener('dragend', () => { dragId = null; $$('.drag-over,.dragging').forEach(c => c.classList.remove('drag-over', 'dragging')); });
@@ -1106,6 +1207,7 @@ const recordDrag = installRecordDrag({ announce: toast, canStart: () => !modal &
     const changed = operation.kind === 'category' ? moveCategory(data, operation.section, operation.id, operation.beforeName, timestamp) : moveRecord(data, operation, timestamp);
     if (!changed) return false;
     if (!save()) { data = previous; render(); return false; }
+    rememberChange(previous, data, operation.kind === 'category' ? '分类排序' : '拖动排序');
     routeState.projectOrder = null;
     if (operation.category !== undefined) { collapsedProjectCategories.delete(operation.category); collapsedNoteCategories.delete(JSON.stringify([operation.section, operation.category])); expandedSections.add(operation.section); }
     const focus = operation.kind === 'category' ? ['category', operation.section, operation.id] : ['record', operation.section, operation.id];
@@ -1117,8 +1219,12 @@ const recordDrag = installRecordDrag({ announce: toast, canStart: () => !modal &
     return true;
   } catch (error) { data = previous; toast(error.message || '拖动未保存。'); return false; }
 } });
-const taskDrag = installRouteTaskDrag({ getProject, saveTaskChange, render, announce: toast });
-const liveEditor = createLiveNoteEditor({ getNote, notify: toast, onChange(id, body) {
+const taskDrag = installRouteTaskDrag({ getProject, saveTaskChange: (project, change) => saveTaskChange(project, change, '事项排序与移动'), render, announce: toast });
+const liveEditor = createLiveNoteEditor({ getNote, notify: toast, onUndo() {
+  const note = currentNote(), step = undoSteps.at(-1);
+  if (!note || step?.templateNoteId !== note.id || step.templateBody !== note.body) return false;
+  void undoLastOperation(); return true;
+}, onChange(id, body) {
   const note = getNote(id); if (!note) return;
   note.body = body; note.summary = summarize(body); if (note !== noteCreation?.note) save(note);
   const empty = !body.trim();
@@ -1126,13 +1232,19 @@ const liveEditor = createLiveNoteEditor({ getNote, notify: toast, onChange(id, b
   if ($('#note-template-suggestions')) $('#note-template-suggestions').hidden = !empty;
   if ($('#note-word-count')) $('#note-word-count').textContent = `${body.replace(/!\[[^\[\]\n]*\]\([^\n)]*\)/g, '').trim().length.toLocaleString('zh-CN')} 字`;
 } });
-const datePicker = installDatePicker({ commit(input, value) {
-  if (input.dataset.editProject === 'due') {
-    const project = getProject(route().id);
-    return Boolean(project && saveTaskChange(project, () => { project.due = value; }));
-  }
-  return true;
+const descriptionEditors = createDescriptionEditors({ getProject, saveTaskChange, notify: toast });
+const templateEditor = createLiveNoteEditor({ contentId: 'template-body', label: '模板正文', allowImages: false, placeholderText: '输入 Markdown 模板内容…', notify: toast,
+  getNote: id => ({ id, body: modal?.draft?.body || '' }), onChange(_, body) { if (modal?.type === 'edit-template') modal.draft.body = body; } });
+const templateDrag = installTemplateDrag({ canStart: () => !storageError && (!modal || modal.type === 'note-templates') && !taskDrag.isDragging() && !recordDrag.isDragging(), commit(operation) {
+  const previous = structuredClone(data.templates);
+  try { if (!moveCommonTemplate(data, operation.id, operation.beforeId, new Date().toISOString())) return; }
+  catch (error) { toast(error.message); return; }
+  if (!save()) { data.templates = previous; return; }
+  rememberChange({ templates: previous }, { templates: data.templates }, '模板排序'); render();
+  $$('[data-template-drag]').find(button => button.dataset.templateDrag === operation.id && !button.closest('[inert]'))?.focus();
+  toast('模板顺序已保存。');
 } });
+const datePicker = installDatePicker();
 const sidebarControls = installSidebarControls();
 const sidebarCreateMenu = installSidebarCreateMenu({ icon });
 setLocale('zh-CN');
@@ -1141,7 +1253,7 @@ if (!location.hash) history.replaceState(null, '', '#projects');
 render();
 function canSyncWorkspace() {
   if (route().kind === 'new-note') return false;
-  if (storageError || modal || sidebarControls.isResizing() || taskDrag.isDragging() || recordDrag.isDragging() || datePicker.isOpen() || liveEditor.isBusy() || [...moduleTaskDrafts.values()].some(title => title.trim()) || [...routeState.drafts.values()].some(body => body.trim())) return false;
+  if (storageError || modal || undoBusy || trashBusy || sidebarControls.isResizing() || taskDrag.isDragging() || recordDrag.isDragging() || templateDrag.isDragging() || datePicker.isOpen() || liveEditor.isBusy() || [...moduleTaskDrafts.values()].some(title => title.trim()) || [...routeState.drafts.values()].some(body => body.trim())) return false;
   const active = document.activeElement;
   if (active?.matches('input,textarea,select,[contenteditable=true]') && !active.closest('#sync-dialog')) return false;
   try { return localStorage.getItem(KEY) === lastDisk; } catch { return false; }
@@ -1160,6 +1272,7 @@ syncClient = createSyncClient({
       if (incoming.projects.some(project => project.order !== undefined && project.order !== getProject(project.id)?.order)) incoming.preferences.sort = 'manual';
       const serialized = serializeWorkspace(incoming);
       localStorage.setItem(KEY, serialized); lastDisk = serialized; data = incoming;
+      undoSteps.length = 0; undoTrashId = null;
       saveGeneration++;
       render(); return true;
     } catch { return false; }
