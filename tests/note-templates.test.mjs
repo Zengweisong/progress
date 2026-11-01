@@ -71,3 +71,19 @@ test('import keeps existing common templates and creates independent copies of d
   assert.equal(merged.find(t => t.id === 'copy').body, '导入的模板内容');
   assert.match(merged.find(t => t.id === 'copy').title, /导入/);
 });
+
+test('home visibility survives backup, merges with template content and can be undone', () => {
+  const base = seedData(), local = structuredClone(base), remote = structuredClone(base);
+  assert.equal(moveCommonTemplate(local, 'meeting', null, '2026-10-28T10:00:00.000Z', true), true);
+  assert.equal(local.templates.find(t => t.id === 'meeting').homeHidden, true);
+  assert.deepEqual(validateData(JSON.parse(JSON.stringify(local))), local);
+  remote.templates[0].body = '独立修改的模板正文';
+  const merged = mergeWorkspaces(base, local, remote);
+  assert.deepEqual(merged.conflicts, []);
+  assert.equal(merged.data.templates.find(t => t.id === 'meeting').homeHidden, true);
+  assert.equal(merged.data.templates.find(t => t.id === 'meeting').body, remote.templates[0].body);
+  assert.deepEqual(undoWorkspaceChange(local, workspaceChange(base, local)), base);
+  assert.equal(moveCommonTemplate(local, 'meeting', null, '2026-10-28T10:00:00.000Z', true), false);
+  assert.equal(moveCommonTemplate(local, 'meeting', null, '2026-10-28T10:00:00.000Z', false), true);
+  local.templates[0].homeHidden = 'yes'; assert.throws(() => validateData(local));
+});

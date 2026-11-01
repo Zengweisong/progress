@@ -17,7 +17,7 @@ import { createDescriptionEditors } from './description-editors.js';
 import { portableMarkdown } from './note-images.js';
 import { blankNoteTitle, noteTemplates, commonTemplates, moveCommonTemplate, importCommonTemplates, renderTemplateCards } from './note-templates.js';
 import { installTemplateDrag } from './template-drag.js';
-import { hydrateWorkspace, persistAttachments, serializeWorkspace, WORKSPACE_BYTES } from './workspace-storage.js';
+import { hydrateWorkspace, persistWorkspaceContent, needsTextPersistence, serializeWorkspace, WORKSPACE_BYTES } from './workspace-storage.js';
 import { archiveWorkspace, getTrashEntries, getRecoveryEntry, deleteRecovery, getSyncMeta } from './sync-db.js';
 import { deletedRecord, removeRecord, restoreRecord } from './recycle-bin.js';
 import { searchWorkspace, highlightText } from './workspace-search.js';
@@ -99,6 +99,8 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let data, lastDisk = null, storageError = '', toastTimer, modal = null, syncClient, syncUI;
 let saveGeneration = 0, trashBusy = false, undoTrashId = null, searchType = 'all', searchTarget = null;
+let retryableSaveError = false;
+let textFlushTimer;
 let trashRecords = [];
 const undoSteps = [];
 let undoBusy = false;
@@ -137,7 +139,7 @@ try {
   lastDisk = localStorage.getItem(KEY);
   data = lastDisk ? validateData(await hydrateWorkspace(JSON.parse(lastDisk))) : seedData();
   if (lastDisk) {
-    await persistAttachments(data);
+    await persistWorkspaceContent(data);
     const compact = serializeWorkspace(data);
     if (localStorage.getItem(KEY) !== lastDisk) throw new Error('另一个窗口已更新数据，请重新加载');
     if (compact !== lastDisk) localStorage.setItem(KEY, compact);
@@ -151,21 +153,39 @@ const freshLocal = lastDisk === null && !storageError;
 
 function save(entity) {
   if (entity) entity.updatedAt = new Date().toISOString();
-  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return false; }
+  if (storageError && !retryableSaveError) { toast('保存受阻，请先导出内容，再重新加载。'); return false; }
   try {
     if (localStorage.getItem(KEY) !== lastDisk) throw new Error('另一个窗口已更新数据，请先导出当前编辑，再重新加载');
-    const next = serializeWorkspace(data);
+    const workspace = descriptionEditors.hasUnappliedDrafts(data) ? descriptionEditors.withDrafts(data) : data;
+    const next = serializeWorkspace(workspace);
     localStorage.setItem(KEY, next);
     lastDisk = next;
+    descriptionEditors.acceptSavedDrafts(data);
+    storageError = ''; retryableSaveError = false;
     saveGeneration++;
-    $$('.save-state').forEach(el => el.innerHTML = `${icon('checkCircle')}本机已保存`);
+    $$('.save-state').forEach(el => { el.classList.remove('error'); el.innerHTML = `${icon('checkCircle')}本机已保存`; });
     syncClient?.localChanged();
+    if (needsTextPersistence(data)) { clearTimeout(textFlushTimer); textFlushTimer = setTimeout(compactSavedText, 150); }
     return true;
   } catch (error) {
     storageError = error.message.includes('另一个窗口') ? error.message : '保存失败，可能是浏览器存储空间不足';
+    retryableSaveError = !error.message.includes('另一个窗口');
     toast(`${storageError}，请导出备份。`);
     $$('.save-state').forEach(el => { el.classList.add('error'); el.innerHTML = '尚未保存'; });
     return false;
+  }
+}
+async function compactSavedText() {
+  if (storageError) return;
+  const generation = saveGeneration, disk = lastDisk;
+  try {
+    await persistWorkspaceContent(data);
+    if (storageError || generation !== saveGeneration || disk !== lastDisk || localStorage.getItem(KEY) !== disk) return;
+    const compact = serializeWorkspace(data);
+    if (compact !== disk) { localStorage.setItem(KEY, compact); lastDisk = compact; }
+  } catch {
+    // The synchronous save still contains the uncommitted text. Never replace
+    // it with references when IndexedDB is full or unavailable.
   }
 }
 function toast(message, undoId = null) {
@@ -221,7 +241,7 @@ async function restoreTrash(id) {
     if (!archived || archived.space !== 'main' || archived.kind !== 'trash' || archived.userId !== context.owner) throw new Error('当前工作区中找不到这条恢复记录。');
     await assertTrashContext(context);
     const next = restoreRecord(structuredClone(data), archived.data);
-    await persistAttachments(next);
+    await persistWorkspaceContent(next);
     await assertTrashContext(context);
     const previous = data; data = next;
     if (!save()) { data = previous; return; }
@@ -237,7 +257,7 @@ async function restoreTrash(id) {
   finally { trashBusy = false; }
 }
 function saveTaskChange(project, change, label = '事项修改', group = null) {
-  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return false; }
+  if (storageError && !retryableSaveError) { toast('保存受阻，请先导出内容，再重新加载。'); return false; }
   const previous = structuredClone(project);
   change();
   if (save(project)) { rememberChange({ projects: [previous] }, { projects: [project] }, label, group); return true; }
@@ -294,7 +314,7 @@ function noteCreateControl(button, attributes = '', compact = false) {
   return `<span class="note-create-control ${compact ? 'is-compact' : ''}">${button}<button type="button" class="note-create-toggle" data-action="new-from-template" ${attributes} aria-label="从模板新建" title="从模板新建">${icon('down')}</button><span class="note-create-options"><button type="button" data-action="new-from-template" ${attributes}>${icon('layout')}从模板新建</button></span></span>`;
 }
 function createNotePage(options = {}, template) {
-  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
+  if (storageError && !retryableSaveError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
   if (data.notes.length >= 10000) { toast('工作区最多支持 10000 篇笔记。'); return; }
   const section = options.section || 'knowledge', favorite = section === 'inbox';
   const category = options.category ?? defaultNoteCategory(favorite);
@@ -311,7 +331,7 @@ function createNotePage(options = {}, template) {
 function applyNoteTemplate(template) {
   const note = currentNote();
   if (!note || note.body.trim()) { toast('正文已有内容，请在空白页面中使用模板。'); return; }
-  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
+  if (storageError && !retryableSaveError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
   const previous = structuredClone(note);
   if (note.title === blankNoteTitle) note.title = template.title;
   note.body = template.body; note.summary = summarize(note.body);
@@ -468,7 +488,7 @@ function saveRouteCapture(form) {
   const body = String(new FormData(form).get('body') || '').trim();
   const input = form.querySelector('textarea');
   if (!body) { input.setCustomValidity('请填写内容，不能只有空格。'); input.reportValidity(); return; }
-  if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
+  if (storageError && !retryableSaveError) { toast('保存受阻，请先导出内容，再重新加载。'); return; }
   const projectId = form.dataset.projectId, project = getProject(projectId);
   if (projectId && !project) { toast('项目已不存在，请重新选择项目。'); return; }
   let tasks = [], note;
@@ -497,10 +517,11 @@ function projectsPage() {
   const projects = filteredProjects();
   const isRoute = workspaceView === 'route';
   const finished = data.projects.filter(p => !p.archived && p.status === 'done').length;
+  const finishedTasks = data.projects.some(p => !p.archived && p.tasks.some(task => task.done && !task.archived));
   const focus = projects.find(p => p.pinned && p.status === 'active');
   const hasFilters = Object.values(filters).some(Boolean);
   return `<section class="page workspace-projects ${isRoute ? 'workspace-route' : ''}">
-    <div class="toolbar"><div class="archive-actions"><button type="button" class="button small subtle" data-action="archive-completed-projects" ${finished ? '' : 'disabled'}>归档已完成项目</button><button type="button" class="button small subtle" data-action="project-archives">已归档项目 ${data.projects.filter(p => p.archived).length}</button></div><div class="toolbar-actions"><button class="button subtle ${hasFilters ? 'selected' : ''}" data-action="filter" aria-label="筛选项目">${icon('filter')}<span class="label-desktop">筛选</span>${hasFilters ? '<span>·</span>' : ''}</button><span class="toolbar-rule"></span><select class="toolbar-select" id="sort-select" aria-label="项目排序"><option value="manual" ${data.preferences.sort === 'manual' ? 'selected' : ''}>手动排序</option><option value="updated" ${data.preferences.sort === 'updated' ? 'selected' : ''}>最近更新</option><option value="due" ${data.preferences.sort === 'due' ? 'selected' : ''}>截止日期</option><option value="title" ${data.preferences.sort === 'title' ? 'selected' : ''}>项目名称</option></select><button class="button primary" data-action="new-project">${icon('plus')}新建项目</button>${!isRoute ? `<button class="button subtle" data-action="view-options" aria-label="视图设置">${icon('more')}</button>` : ''}</div></div>
+    <div class="toolbar"><div class="archive-actions"><button type="button" class="button small subtle" data-action="archive-completed-projects" ${finished ? '' : 'disabled'}>归档已完成项目</button><button type="button" class="button small subtle" data-action="project-archives">已归档项目 ${data.projects.filter(p => p.archived).length}</button><button type="button" class="button small subtle" data-action="archive-all-completed-tasks" title="归档所有未归档项目中的已完成事项" ${finishedTasks ? '' : 'disabled'}>归档已完成事项</button></div><div class="toolbar-actions"><button class="button subtle ${hasFilters ? 'selected' : ''}" data-action="filter" aria-label="筛选项目">${icon('filter')}<span class="label-desktop">筛选</span>${hasFilters ? '<span>·</span>' : ''}</button><span class="toolbar-rule"></span><select class="toolbar-select" id="sort-select" aria-label="项目排序"><option value="manual" ${data.preferences.sort === 'manual' ? 'selected' : ''}>手动排序</option><option value="updated" ${data.preferences.sort === 'updated' ? 'selected' : ''}>最近更新</option><option value="due" ${data.preferences.sort === 'due' ? 'selected' : ''}>截止日期</option><option value="title" ${data.preferences.sort === 'title' ? 'selected' : ''}>项目名称</option></select><button class="button primary" data-action="new-project">${icon('plus')}新建项目</button>${!isRoute ? `<button class="button subtle" data-action="view-options" aria-label="视图设置">${icon('more')}</button>` : ''}</div></div>
     <h1 class="sr-only">我的项目</h1>
     ${focus ? `<div class="focus-banner"><span class="focus-icon">${icon('compass')}</span><div class="focus-text"><strong>继续上次的进展</strong>${esc(focus.title)}<span> · 还有 ${focus.tasks.filter(t => !t.done).length} 项任务待完成</span></div><button class="button" data-project="${esc(focus.id)}">打开项目${icon('arrow')}</button></div>` : ''}
     ${hasFilters ? `<div class="filter-summary">已筛选 ${projects.length} 个项目<button data-action="clear-filter">清除筛选</button></div>` : ''}
@@ -575,7 +596,9 @@ function modalMarkup() {
   if (!modal) return '';
   if (modal.type === 'note-templates') {
     const templates = noteTemplates(data.notes, data.templates), custom = templates.filter(template => template.key.startsWith('note:'));
-    return modalShell(modal.apply ? '选择页面模板' : '从模板新建', `<p class="modal-subtitle">${modal.apply ? '选择模板，开始这篇空白页面。' : '选择模板，创建一份独立的页面副本。'}</p><h3 class="note-template-heading">常用模板</h3><div class="note-template-grid">${renderTemplateCards(templates.filter(template => template.key.startsWith('builtin:')), esc, 'select-note-template', true)}</div><h3 class="note-template-heading">我的模板</h3>${custom.length ? `<div class="note-template-grid">${renderTemplateCards(custom, esc, 'select-note-template')}</div>` : '<p class="note-template-empty">在任意页面点击“设为模板”，就能在这里重复使用。</p>'}`);
+    const common = templates.filter(template => template.key.startsWith('builtin:'));
+    const zone = (hidden, hint) => `<div class="note-template-grid template-zone" data-template-zone="${hidden ? 'hidden' : 'home'}" aria-label="${hidden ? '不在主页显示的模板' : '主页常用模板'}">${renderTemplateCards(common.filter(template => Boolean(template.homeHidden) === hidden), esc, 'select-note-template', true) || `<p class="note-template-drop-hint">${hint}</p>`}</div>`;
+    return modalShell(modal.apply ? '选择页面模板' : '从模板新建', `<p class="modal-subtitle">${modal.apply ? '选择模板，开始这篇空白页面。' : '选择模板，创建一份独立的页面副本。'}</p><h3 class="note-template-heading">常用模板</h3>${zone(false, '拖到这里，在主页显示')}<h3 class="note-template-heading">更多模板 · 不在主页显示</h3>${zone(true, '将不常用的模板拖到这里收起，仍可在这里使用')}<h3 class="note-template-heading">我的模板</h3>${custom.length ? `<div class="note-template-grid">${renderTemplateCards(custom, esc, 'select-note-template')}</div>` : '<p class="note-template-empty">在任意页面点击“设为模板”，就能在这里重复使用。</p>'}`);
   }
   if (modal.type === 'edit-template') return modalShell('编辑常用模板', `<form id="template-edit-form"><label class="form-field"><span>模板名称</span><input name="title" maxlength="200" value="${esc(modal.draft.title)}" required autocomplete="off"></label><label class="form-field"><span>模板简介</span><input name="description" maxlength="500" value="${esc(modal.draft.description)}" autocomplete="off"></label><div class="form-field"><span id="template-body-label">Markdown 正文</span><div id="common-template-editor" class="common-template-editor live-note-editor description-editor" aria-labelledby="template-body-label"></div></div>${formActions('保存模板')}</form>`);
   if (modal.type === 'module') {
@@ -821,7 +844,7 @@ document.addEventListener('click', async event => {
     case 'delete-category': modal = { ...modal, type: 'confirm-category-delete' }; render(); $('.modal .button')?.focus(); break;
     case 'confirm-delete-category': {
       const section = modal.section;
-      if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
+      if (storageError && !retryableSaveError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
       const previous = structuredClone(data);
       try {
         removeCategory(data, section, modal.previousName, new Date().toISOString());
@@ -930,6 +953,20 @@ document.addEventListener('click', async event => {
       if (route().kind === 'project' && archived && projects.some(p => p.id === route().id)) closeDrawer();
       render(); toast(archived ? '项目已归档，可在归档列表中恢复。' : '项目已恢复。'); break;
     }
+    case 'archive-all-completed-tasks': {
+      if (storageError && !retryableSaveError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
+      const projects = data.projects.filter(p => !p.archived && p.tasks.some(task => task.done && !task.archived));
+      if (!projects.length) break;
+      const previous = structuredClone(data);
+      let count = 0;
+      for (const p of projects) {
+        for (const task of p.tasks) if (task.done && !task.archived) { task.archived = true; count++; }
+        p.updatedAt = new Date().toISOString();
+      }
+      if (!save()) { data = previous; render(); break; }
+      rememberChange(previous, data, '归档已完成事项');
+      render(); toast(`已归档 ${count} 项已完成事项，可在各项目的“已归档事项”中恢复。`); break;
+    }
     case 'archive-task': case 'restore-task': case 'archive-completed-tasks': {
       const p = getProject(target.dataset.projectId); if (!p) break;
       const tasks = action === 'archive-completed-tasks' ? p.tasks.filter(task => !task.archived && task.done) : p.tasks.filter(task => task.id === target.dataset.id);
@@ -971,7 +1008,7 @@ document.addEventListener('submit', event => {
   if ((['project-form', 'task-edit-form'].includes(form.id) || form.hasAttribute('data-task-add')) && !title) { const input = form.querySelector('[name=title]'); input.setCustomValidity('请填写内容，不能只有空格。'); input.reportValidity(); return; }
   if (form.hasAttribute('data-task-add')) {
     const p = getProject(form.dataset.projectId);
-    if (!p || storageError) return;
+    if (!p || (storageError && !retryableSaveError)) return;
     if (p.tasks.length >= 1000) { toast('每个项目最多 1000 项任务。'); return; }
     const input = form.querySelector('input');
     if (saveTaskChange(p, () => p.tasks.push({ id: uid(), title, done: false, status: 'todo', moduleId: form.dataset.moduleId || '' }))) { input.value = ''; moduleTaskDrafts.delete(input.id); }
@@ -979,7 +1016,7 @@ document.addEventListener('submit', event => {
   }
   switch (form.id) {
     case 'template-edit-form': {
-      if (modal?.type !== 'edit-template' || storageError) break;
+      if (modal?.type !== 'edit-template' || (storageError && !retryableSaveError)) break;
       if (!title) { $('#form-error').textContent = '请填写模板名称。'; break; }
       const previous = structuredClone(data.templates), template = data.templates.find(template => template.id === modal.id);
       if (!template && data.templates.length >= 100) { $('#form-error').textContent = '模板数量已达上限，请先整理模板。'; break; }
@@ -992,7 +1029,7 @@ document.addEventListener('submit', event => {
     }
     case 'module-form': {
       const p = getProject(modal.projectId), name = String(values.get('name') || '').trim();
-      if (!p || storageError) break;
+      if (!p || (storageError && !retryableSaveError)) break;
       if (!name || (!modal.ungrouped && name === ungroupedName(p)) || (p.modules || []).some(module => module.id !== modal.id && module.name === name)) { $('#form-error').textContent = '请输入不重复的模块名称。'; break; }
       const module = p.modules?.find(item => item.id === modal.id);
       if (!module && !modal.ungrouped && (p.modules || []).length >= 100) { $('#form-error').textContent = '每个项目最多 100 个模块。'; break; }
@@ -1004,7 +1041,7 @@ document.addEventListener('submit', event => {
     }
     case 'task-edit-form': {
       const p = getProject(modal.projectId), task = p?.tasks.find(item => item.id === modal.id);
-      if (!task || storageError) break;
+      if (!task || (storageError && !retryableSaveError)) break;
       if (saveTaskChange(p, () => {
         const moved = (task.moduleId || '') !== String(values.get('moduleId') || '');
         task.title = title; task.moduleId = String(values.get('moduleId') || '');
@@ -1019,7 +1056,7 @@ document.addEventListener('submit', event => {
       })) dismissModal(); break;
     }
     case 'category-form': {
-      if (storageError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
+      if (storageError && !retryableSaveError) { toast('保存受阻，请先导出内容，再重新加载。'); break; }
       try {
         const section = modal.section;
         const previous = structuredClone(data);
@@ -1033,21 +1070,33 @@ document.addEventListener('submit', event => {
     case 'project-form': {
       const p = { id: uid(), title, description: String(values.get('description')).trim(), status: values.get('status'), priority: values.get('priority'), tag: String(values.get('tag') || '').trim(), due: values.get('due'), color: 'blue', icon: 'layers', tasks: [], pinned: false, custom: {}, updatedAt: new Date().toISOString() };
       const parent = modal.section ? categoryPath(modal.section, p.tag) : sectionPath();
-      data.projects.unshift(p); const saved = save(); modal = null; filters = { status: '', priority: '', tag: '' }; routeState.filter = 'all'; routeState.selectedProject = p.id; openProject(p.id, parent); if (saved) toast('项目已创建，添加第一个任务吧。'); break;
+      data.projects.unshift(p);
+      if (!save()) { data.projects.shift(); $('#form-error').textContent = '项目尚未保存，请保留表单，释放存储空间后重试。'; break; }
+      modal = null; filters = { status: '', priority: '', tag: '' }; routeState.filter = 'all'; routeState.selectedProject = p.id; openProject(p.id, parent); toast('项目已创建，添加第一个任务吧。'); break;
     }
     case 'filter-form': filters = { status: values.get('status'), priority: values.get('priority'), tag: values.get('tag') }; dismissModal(); break;
-    case 'view-form': data.preferences.group = values.get('group'); save(); dismissModal(); break;
+    case 'view-form': { const previous = data.preferences.group; data.preferences.group = values.get('group'); if (!save()) { data.preferences.group = previous; break; } dismissModal(); break; }
     case 'field-form': {
       const name = String(values.get('name')).trim();
       if (!name || data.fields.some(f => f.name === name)) { $('#form-error').textContent = '请填写不重复的属性名称。'; return; }
-      data.fields.push({ id: uid(), name, type: values.get('type') }); save(); dismissModal(); toast('属性已添加，打开项目详情即可填写。'); break;
+      data.fields.push({ id: uid(), name, type: values.get('type') });
+      if (!save()) { data.fields.pop(); $('#form-error').textContent = '属性尚未保存，请保留表单并重试。'; break; }
+      dismissModal(); toast('属性已添加，打开项目详情即可填写。'); break;
     }
     case 'link-notes-form': {
+      const previous = structuredClone(data.notes);
       const chosen = new Set(values.getAll('notes'));
       for (const n of data.notes) { const has = n.projectIds.includes(modal.id); if (chosen.has(n.id) !== has) { n.projectIds = chosen.has(n.id) ? [...n.projectIds, modal.id] : n.projectIds.filter(id => id !== modal.id); n.updatedAt = new Date().toISOString(); } }
-      save(); dismissModal(); toast('笔记关联已更新。'); break;
+      if (!save()) { data.notes = previous; $('#form-error').textContent = '笔记关联尚未保存，请重试。'; break; }
+      dismissModal(); toast('笔记关联已更新。'); break;
     }
-    case 'link-projects-form': { const n = getNote(modal.id); if (n) { n.projectIds = values.getAll('projects'); save(n); } dismissModal(); toast('项目关联已更新。'); break; }
+    case 'link-projects-form': {
+      const n = getNote(modal.id); if (!n) break;
+      const previous = { projectIds: n.projectIds, updatedAt: n.updatedAt };
+      n.projectIds = values.getAll('projects');
+      if (!save(n)) { Object.assign(n, previous); $('#form-error').textContent = '项目关联尚未保存，请重试。'; break; }
+      dismissModal(); toast('项目关联已更新。'); break;
+    }
   }
 });
 function summarize(body) { return body.replace(/!\[([^\[\]\n]*)\]\([^\n)]*\)/g, '$1').split('\n').filter(line => line.trim() && !line.startsWith('#')).join(' ').replace(/[*`>]/g, '').slice(0, 90); }
@@ -1099,7 +1148,7 @@ async function importData() {
   if (!importCandidate) return;
   const candidate = importCandidate, generation = saveGeneration;
   const incoming = structuredClone(candidate), projectIds = new Map(), fieldIds = new Map();
-  try { await persistAttachments(incoming); }
+  try { await persistWorkspaceContent(incoming); }
   catch (error) { toast(error.message || '图片保存失败，尚未导入。'); return; }
   if (importCandidate !== candidate || saveGeneration !== generation || modal?.type !== 'confirm-import') { toast('内容已发生变化，请重新导入。'); return; }
   for (const f of incoming.fields) { const old = f.id; f.id = uid(); fieldIds.set(old, f.id); }
@@ -1129,7 +1178,7 @@ document.addEventListener('keydown', event => {
   if (event.repeat) return;
   // Let the editor process pending input before saving, without moving focus.
   setTimeout(() => {
-    if (storageError) { save(); return; }
+    if (storageError && !retryableSaveError) { save(); return; }
     if (trashBusy || undoBusy || taskDrag.isDragging() || recordDrag.isDragging() || templateDrag.isDragging()) { toast('正在保存当前操作，请稍候。'); return; }
     if (liveEditor.isBusy()) { toast('图片正在处理，完成后会自动保存。'); return; }
     const target = event.target.isConnected ? event.target : document.activeElement;
@@ -1237,12 +1286,12 @@ const templateEditor = createLiveNoteEditor({ contentId: 'template-body', label:
   getNote: id => ({ id, body: modal?.draft?.body || '' }), onChange(_, body) { if (modal?.type === 'edit-template') modal.draft.body = body; } });
 const templateDrag = installTemplateDrag({ canStart: () => !storageError && (!modal || modal.type === 'note-templates') && !taskDrag.isDragging() && !recordDrag.isDragging(), commit(operation) {
   const previous = structuredClone(data.templates);
-  try { if (!moveCommonTemplate(data, operation.id, operation.beforeId, new Date().toISOString())) return; }
+  try { if (!moveCommonTemplate(data, operation.id, operation.beforeId, new Date().toISOString(), operation.homeHidden)) return; }
   catch (error) { toast(error.message); return; }
   if (!save()) { data.templates = previous; return; }
-  rememberChange({ templates: previous }, { templates: data.templates }, '模板排序'); render();
+  rememberChange({ templates: previous }, { templates: data.templates }, '模板排序与主页显示'); render();
   $$('[data-template-drag]').find(button => button.dataset.templateDrag === operation.id && !button.closest('[inert]'))?.focus();
-  toast('模板顺序已保存。');
+  toast(operation.homeHidden === true ? '模板已收起，不再显示在主页。' : operation.homeHidden === false ? '模板位置与主页显示已保存。' : '模板顺序已保存。');
 } });
 const datePicker = installDatePicker();
 const sidebarControls = installSidebarControls();
@@ -1267,7 +1316,7 @@ syncClient = createSyncClient({
     try {
       const generation = saveGeneration;
       const incoming = validateData(next);
-      await persistAttachments(incoming);
+      await persistWorkspaceContent(incoming);
       if (!canSyncWorkspace() || saveGeneration !== generation) return false;
       if (incoming.projects.some(project => project.order !== undefined && project.order !== getProject(project.id)?.order)) incoming.preferences.sort = 'manual';
       const serialized = serializeWorkspace(incoming);

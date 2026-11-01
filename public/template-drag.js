@@ -1,16 +1,23 @@
 export function installTemplateDrag({ commit, canStart }) {
   let gesture = null, frame = 0, suppressed = null;
   const handleAt = event => event.target.closest('[data-template-drag]');
-  const clear = () => document.querySelectorAll('.template-drop-before,.template-drop-after').forEach(node => node.classList.remove('template-drop-before', 'template-drop-after'));
+  const clear = () => document.querySelectorAll('.template-drop-before,.template-drop-after,.template-zone-active').forEach(node => node.classList.remove('template-drop-before', 'template-drop-after', 'template-zone-active'));
   function paint() {
     const g = gesture; if (!g?.dragging) return;
     clear(); g.drop = null;
     g.ghost.style.transform = `translate(${g.x + 12}px, ${g.y + 12}px)`;
-    const target = document.elementFromPoint(g.x, g.y)?.closest('[data-common-template]');
-    if (!target || target === g.card || target.parentElement !== g.grid || target.closest('[inert]')) return;
-    const cards = [...g.grid.querySelectorAll(':scope > [data-common-template]')].filter(node => node !== g.card);
+    const hit = document.elementFromPoint(g.x, g.y), target = hit?.closest('[data-common-template]'), zone = hit?.closest('[data-template-zone]');
+    if (hit?.closest('[inert]') || target === g.card) return;
+    const grid = zone || target?.parentElement;
+    if (!grid || (grid !== g.grid && (!zone || grid.closest('.modal') !== g.grid.closest('.modal')))) return;
+    const homeHidden = zone ? zone.dataset.templateZone === 'hidden' : undefined;
+    if (!target) {
+      if (!zone) return;
+      g.drop = { id: g.id, beforeId: null, homeHidden }; zone.classList.add('template-zone-active'); return;
+    }
+    const cards = [...grid.querySelectorAll(':scope > [data-common-template]')].filter(node => node !== g.card);
     const bounds = target.getBoundingClientRect(), after = g.x >= bounds.left + bounds.width / 2;
-    g.drop = { id: g.id, beforeId: (after ? cards[cards.indexOf(target) + 1] : target)?.dataset.commonTemplate ?? null };
+    g.drop = { id: g.id, beforeId: (after ? cards[cards.indexOf(target) + 1] : target)?.dataset.commonTemplate ?? null, homeHidden };
     target.classList.add(after ? 'template-drop-after' : 'template-drop-before');
   }
   function tick() {
@@ -56,6 +63,9 @@ export function installTemplateDrag({ commit, canStart }) {
     const handle = handleAt(event);
     if (!handle || !event.altKey || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) || !canStart()) return;
     event.preventDefault(); event.stopImmediatePropagation();
+    if (event.shiftKey && ['ArrowUp', 'ArrowDown'].includes(event.key) && handle.closest('.modal')) {
+      commit({ id: handle.dataset.templateDrag, beforeId: null, homeHidden: event.key === 'ArrowDown' }); return;
+    }
     const cards = [...handle.closest('.note-template-grid').querySelectorAll(':scope > [data-common-template]')];
     const from = cards.indexOf(handle.closest('[data-common-template]')), to = from + (['ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 1);
     if (to >= 0 && to < cards.length) commit({ id: handle.dataset.templateDrag, beforeId: (to < from ? cards[to] : cards[to + 1])?.dataset.commonTemplate ?? null });

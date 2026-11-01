@@ -18,14 +18,16 @@ export function commonTemplates(saved = []) {
   return [...records.values()].map((template, index) => ({ template, index })).sort((a, b) => (a.template.order ?? a.index) - (b.template.order ?? b.index) || a.index - b.index).map(({ template }) => ({ ...template, key: `builtin:${template.id}` }));
 }
 
-export function moveCommonTemplate(data, id, beforeId, timestamp) {
+export function moveCommonTemplate(data, id, beforeId, timestamp, homeHidden) {
   const templates = commonTemplates(data.templates), from = templates.findIndex(template => template.id === id);
   if (templates.length > 100) throw new Error('模板数量已达上限，请先整理模板。');
   if (from < 0 || id === beforeId || (beforeId !== null && !templates.some(template => template.id === beforeId))) return false;
   const next = [...templates], [template] = next.splice(from, 1);
+  const visibilityChanged = typeof homeHidden === 'boolean' && Boolean(template.homeHidden) !== homeHidden;
+  if (visibilityChanged) template.homeHidden = homeHidden;
   next.splice(beforeId === null ? next.length : next.findIndex(template => template.id === beforeId), 0, template);
-  if (next.every((template, index) => template.id === templates[index].id)) return false;
-  data.templates = next.map(({ key, ...template }, order) => ({ ...template, order, updatedAt: template.order === order ? template.updatedAt : timestamp }));
+  if (!visibilityChanged && next.every((template, index) => template.id === templates[index].id)) return false;
+  data.templates = next.map(({ key, ...template }, order) => ({ ...template, order, updatedAt: template.order === order && !(visibilityChanged && template.id === id) ? template.updatedAt : timestamp }));
   return true;
 }
 
@@ -52,5 +54,5 @@ export function renderTemplateCards(templates, esc, action = 'apply-note-templat
 }
 
 export function renderEmptyNoteTemplates(notes, esc, icon, saved = []) {
-  return `<section class="note-empty-templates" aria-label="选择页面模板"><p>直接输入正文，也可以选择一个模板：</p><div class="note-template-grid">${renderTemplateCards(noteTemplates(notes, saved), esc, 'apply-note-template', true)}<button type="button" class="note-template-card" data-action="note-template-picker"><span class="note-template-glyph" aria-hidden="true">${icon('layout')}</span><span><strong>更多模板</strong><small>浏览全部页面模板</small></span></button></div></section>`;
+  return `<section class="note-empty-templates" aria-label="选择页面模板"><p>直接输入正文，也可以选择一个模板：</p><div class="note-template-grid" data-template-zone="home">${renderTemplateCards(noteTemplates(notes, saved).filter(template => !template.homeHidden), esc, 'apply-note-template', true)}<button type="button" class="note-template-card" data-action="note-template-picker"><span class="note-template-glyph" aria-hidden="true">${icon('layout')}</span><span><strong>更多模板</strong><small>浏览全部页面模板</small></span></button></div></section>`;
 }

@@ -135,8 +135,13 @@ public class MainActivity extends Activity {
             @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (picker != null) picker.onReceiveValue(null);
                 picker = callback;
-                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json");
-                intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/plain", "application/octet-stream"});
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE);
+                String[] accepts = params.getAcceptTypes();
+                boolean images = false;
+                for (String accept : accepts) if (accept != null && accept.startsWith("image/")) images = true;
+                intent.setType(images ? "image/*" : "application/json");
+                intent.putExtra(Intent.EXTRA_MIME_TYPES, images ? accepts : new String[]{"application/json", "text/plain", "application/octet-stream"});
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
                 try { startActivityForResult(intent, PICK_JSON); } catch (Exception error) { picker.onReceiveValue(null); picker = null; notice("无法打开文件选择器。"); }
                 return true;
             }
@@ -216,7 +221,7 @@ public class MainActivity extends Activity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == PICK_JSON && picker != null) {
-            picker.onReceiveValue(result == RESULT_OK && data != null && data.getData() != null ? new Uri[]{data.getData()} : null); picker = null;
+            picker.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data)); picker = null;
         }
         if (request == SAVE_JSON) {
             if (result != RESULT_OK || data == null || data.getData() == null || exportFile == null) { clearExport(); return; }

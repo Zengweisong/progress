@@ -110,7 +110,7 @@
 }
 
 /* Markdown, the live editor and creation preview. */
-:root[data-theme=dark] .note-live-paper { background: transparent; }
+:root[data-theme=dark] .note-paper.note-live-paper { background: transparent; }
 :root[data-theme=dark] .note-width-toggle[aria-pressed=true] { background: var(--primary-soft); color: var(--primary); }
 :root[data-theme=dark] .note-page-actions .note-favorite[aria-pressed=true] { color: #e2bd6d; background: #e2bd6d14; }
 :root[data-theme=dark] :is(.note-workspace .markdown-tools, .capture-mode-bar, .capture-markdown .markdown-tools) { background: var(--bg); border-color: var(--line); }

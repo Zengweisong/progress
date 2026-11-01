@@ -46,7 +46,7 @@ async function fixture(t, options = {}) {
       },
       ...(unsafe ? { body: raw ?? JSON.stringify(body ?? {}) } : {}),
     });
-    const data = await response.json();
+    const data = response.status === 304 ? null : await response.json();
     const nextCookie = response.headers.get('set-cookie')?.split(';')[0];
     if (nextCookie && data.user?.id) cookieUsers.set(nextCookie, data.user.id);
     return { status: response.status, data, headers: response.headers, cookie: nextCookie };
@@ -79,6 +79,26 @@ test('session registration, safe cookie, login, and server-side logout invalidat
   assert.equal((await f.request('/api/workspace', { cookie: login.cookie })).status, 401);
   const duplicate = await f.request('/api/register', { method: 'POST', body: { username: 'ALICE', password } });
   assert.equal(duplicate.status, 409);
+});
+
+test('conditional workspace reads omit unchanged payloads and isolate accounts, spaces and client formats', async t => {
+  const f = await fixture(t), alice = await f.register(), data = seedData();
+  await f.request('/api/workspace', { method: 'PUT', cookie: alice.cookie, body: { expectedRevision: 0, data } });
+  const first = await f.request('/api/workspace', { cookie: alice.cookie });
+  const etag = first.headers.get('etag');
+  assert.ok(etag);
+  const unchanged = await f.request('/api/workspace', { cookie: alice.cookie, headers: { 'If-None-Match': etag } });
+  assert.equal(unchanged.status, 304); assert.equal(unchanged.data, null);
+  assert.equal((await f.request('/api/workspace?space=lab', { cookie: alice.cookie, headers: { 'If-None-Match': etag } })).status, 200);
+  assert.equal((await f.request('/api/workspace', { cookie: alice.cookie, headers: { 'If-None-Match': etag, 'X-Shixu-Templates': '' } })).status, 200);
+  const bob = await f.register('bob');
+  assert.equal((await f.request('/api/workspace', { cookie: bob.cookie, headers: { 'If-None-Match': etag } })).status, 200);
+  assert.equal((await f.request('/api/workspace', { headers: { 'If-None-Match': etag } })).status, 401);
+  data.notes[0].body = '版本更新';
+  await f.request('/api/workspace', { method: 'PUT', cookie: alice.cookie, body: { expectedRevision: 1, data } });
+  const changed = await f.request('/api/workspace', { cookie: alice.cookie, headers: { 'If-None-Match': etag } });
+  assert.equal(changed.status, 200); assert.equal(changed.data.data.notes[0].body, '版本更新');
+  assert.notEqual(changed.headers.get('etag'), etag);
 });
 
 test('legacy uploads preserve customized common templates while saving other edits', async t => {

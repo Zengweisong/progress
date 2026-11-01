@@ -51,6 +51,33 @@ test('system appearance updates until an explicit choice is saved', async ({ pag
   expect(await page.evaluate(key => localStorage.getItem(key), key)).toBe('dark');
 });
 
+test('empty and populated note editors share the page background in both themes', async ({ page }) => {
+  await page.goto('/#knowledge');
+  await page.getByRole('button', { name: '新建页面', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: '笔记正文', exact: true });
+  const backgrounds = () => page.evaluate(() => {
+    const effective = element => {
+      for (let node = element; node; node = node.parentElement) {
+        const color = getComputedStyle(node).backgroundColor;
+        if (color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)') return color;
+      }
+    };
+    const page = effective(document.querySelector('.note-workspace'));
+    return ['.note-live-paper', '#live-note-editor', '.cm-editor', '.cm-content', '#note-template-suggestions'].map(selector => ({
+      selector, color: effective(document.querySelector(selector)), page,
+    }));
+  });
+  for (const appearance of ['light', 'dark']) {
+    if (await theme(page).getAttribute('data-theme') !== appearance) await toggle(page).click();
+    for (const body of ['', '正文背景应该与页面保持一致。']) {
+      await editor.fill(body); await editor.blur();
+      for (const { color, page: background } of await backgrounds()) expect(color).toBe(background);
+      await editor.focus();
+      for (const { color, page: background } of await backgrounds()) expect(color).toBe(background);
+    }
+  }
+});
+
 test('sidebar shortcuts appear between personal space and workspace and both remain usable', async ({ page }) => {
   test.skip(page.viewportSize().width <= 700, 'The desktop sidebar is hidden on phones');
   await page.goto('/');

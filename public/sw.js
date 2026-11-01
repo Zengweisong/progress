@@ -1,4 +1,4 @@
-const CACHE = 'shixu-shell-v26';
+const CACHE = 'shixu-shell-v28';
 const SHELL = [
   '/', '/index.html', '/layouts.html', '/designs.html', '/favicon.svg',
   '/app.js', '/data.js', '/styles.css', '/designs.js', '/designs.css',
@@ -6,7 +6,7 @@ const SHELL = [
   '/sidebar.js', '/sidebar.css', '/sidebar-create.js',
   '/theme.js', '/theme.css',
   '/note-templates.js', '/template-drag.js', '/note-editor.js', '/note-editor.css', '/markdown.js', '/categories.js',
-  '/live-note-editor.js', '/live-note-editor.css', '/description-editors.js', '/note-images.js', '/vendor/editor/codemirror.js',
+  '/live-note-editor.js', '/editor-line-tools.js', '/live-note-editor.css', '/description-editors.js', '/note-images.js', '/vendor/editor/codemirror.js',
   '/workspace-storage.js', '/workspace-search.js', '/workspace-undo.js', '/recycle-bin.js', '/workspace-tools.css',
   '/date-picker.js', '/date-picker.css',
   '/vendor/markdown/marked.js', '/vendor/markdown/purify.js',

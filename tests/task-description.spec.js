@@ -105,7 +105,7 @@ test('backup rescues unsaved project and task description drafts without changin
   await project.fill('## 保存失败后的项目说明');
   await details(page).fill('保存失败后的任务说明');
   await second.fill('');
-  await expect(page.locator('#toast')).toContainText('保存受阻');
+  await expect(page.locator('#toast')).toContainText('保存失败');
   expect(await read(page)).toEqual(before);
   await page.getByRole('button', { name: '关闭项目详情', exact: true }).click();
   await page.getByRole('button', { name: '查看本机保存与备份状态', exact: true }).click();
@@ -190,6 +190,38 @@ test('task Markdown shortcuts, undo, redo and link editing stay inside the descr
   await expect.poll(async () => (await task(page)).description).toBe('[参考链接](https://example.com)');
 });
 
+test('project and task descriptions confirm typed Markdown with a space', async ({ page }) => {
+  for (const editor of [page.getByRole('textbox', { name: '项目说明', exact: true }), details(page)]) {
+    await editor.fill(''); await editor.pressSequentially('**重点**');
+    await expect(editor).toHaveText('**重点**'); await expect(editor.locator('.cm-md-strong')).toHaveCount(0);
+    await editor.press('Space'); await expect(editor.locator('.cm-md-strong')).toHaveText('重点');
+    await page.getByRole('textbox', { name: '项目标题', exact: true }).focus(); await editor.focus();
+    await expect(editor.locator('.cm-md-strong')).toHaveText('重点');
+  }
+  expect((await read(page)).projects[0].description).toBe('**重点** ');
+  expect((await read(page)).projects[0].tasks[0].description).toBe('**重点** ');
+});
+
+test('project and task descriptions stay rendered during direct edits and repeated focus', async ({ page }) => {
+  const markdown = '## 完成标准\n\n**重点**\n\n> 引用';
+  for (const editor of [page.getByRole('textbox', { name: '项目说明', exact: true }), details(page)]) {
+    await editor.fill(markdown);
+    for (let index = 0; index < 2; index++) {
+      await page.getByRole('textbox', { name: '项目标题', exact: true }).focus();
+      await editor.locator('.cm-md-h2').click(); await expect(editor.locator('.cm-md-h2')).toHaveText('完成标准');
+      await editor.locator('.cm-md-strong').click(); await expect(editor.locator('.cm-md-strong')).toHaveText('重点');
+    }
+    await editor.press('End'); await page.keyboard.insertText('补充');
+    await expect(editor.locator('.cm-md-strong')).toHaveText('重点补充');
+    expect(await editorSource(editor)).toBe(markdown.replace('重点', '重点补充'));
+  }
+  const saved = await read(page);
+  expect(saved.projects[0].description).toBe(markdown.replace('重点', '重点补充'));
+  expect(saved.projects[0].tasks[0].description).toBe(markdown.replace('重点', '重点补充'));
+  await page.reload();
+  await expect(details(page).locator('.cm-md-strong')).toHaveText('重点补充');
+});
+
 test('multiple Markdown editors retain independent content and history through rerenders', async ({ page }) => {
   const project = page.getByRole('textbox', { name: '项目说明', exact: true }), first = details(page);
   const second = page.locator('[data-task-description="p1-t1"] .cm-content');
@@ -213,5 +245,15 @@ test('Markdown remains text-safe and enforces the existing description length li
   expect((await read(page)).projects[0].description).toBe(source);
   await editor.fill('字'.repeat(20001));
   await expect(page.locator('#toast')).toContainText('20000');
+  expect((await read(page)).projects[0].description).toBe(source);
+});
+
+test('table cell edits obey the description limit and restore rejected text', async ({ page }) => {
+  const source = '| 标准 | 结果 |\n| --- | --- |\n| 验收 | 通过 |';
+  await page.getByRole('textbox', { name: '项目说明', exact: true }).fill(source);
+  const cell = page.locator('#project-description-editor').getByRole('textbox', { name: '表格第 2 行第 2 列', exact: true });
+  await cell.fill('字'.repeat(20000));
+  await expect(page.locator('#toast')).toContainText('20000');
+  await expect(cell).toHaveText('通过');
   expect((await read(page)).projects[0].description).toBe(source);
 });

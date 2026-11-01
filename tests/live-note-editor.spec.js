@@ -83,13 +83,174 @@ test('images can be pasted and dropped, with attachments stored together with th
   expect((await note(page)).attachments).toHaveLength(2); validateData(await read(page));
 });
 
-test('active line exposes Markdown syntax, and task markers remain editable', async ({ page }) => {
+test('focus and refocus keep Markdown rendered while text and task markers remain editable', async ({ page }) => {
   await page.locator('.cm-md-h1').click();
-  await expect(page.locator('.cm-md-h1')).toContainText('# 写作与思考');
+  await expect(page.locator('.cm-md-h1')).toHaveText('写作与思考');
+  await editor(page).press('End'); await page.keyboard.insertText('记录');
+  await expect.poll(() => source(page)).toBe(sample.replace('写作与思考', '写作与思考记录'));
+  await editor(page).press('Backspace'); await expect(page.locator('.cm-md-h1')).toHaveText('写作与思考记');
+  await editor(page).press('Control+z'); await expect(page.locator('.cm-md-h1')).toHaveText('写作与思考');
+  await page.locator('#note-title').focus();
+  await page.locator('.cm-md-h1').click(); await expect(page.locator('.cm-md-h1')).toHaveText('写作与思考');
+  await page.locator('.cm-md-strong').click(); await expect(page.locator('.cm-md-strong')).toHaveText('重要的想法');
   await page.locator('#note-title').focus(); await expect(page.locator('.cm-md-h1')).toHaveText('写作与思考');
   await page.locator('.cm-md-task').last().check(); await expect.poll(() => source(page)).toContain('- [x] 写下第一稿');
   await editor(page).fill('- [ ] 新事项'); await editor(page).press('End'); await editor(page).press('Enter');
   await expect.poll(() => source(page)).toBe('- [ ] 新事项\n- [ ] ');
+});
+
+test('typed Markdown markers stay visible until a space confirms their formatting', async ({ page }) => {
+  for (const [text, selector, visible] of [
+    ['##', '.cm-md-h2', '标题'], ['>', '.cm-md-quote', '引用'], ['-', '.cm-md-bullet', '事项'],
+  ]) {
+    await editor(page).fill(''); await editor(page).pressSequentially(text);
+    await expect(editor(page)).toHaveText(text); await expect(page.locator(selector)).toHaveCount(0);
+    await editor(page).press('Space'); await expect(page.locator(selector)).toHaveCount(1);
+    await page.keyboard.insertText(visible);
+    await expect(editor(page)).not.toContainText(text);
+    await expect.poll(() => source(page)).toBe(`${text} ${visible}`);
+  }
+  for (const [text, selector, visible] of [
+    ['**重点**', '.cm-md-strong', '重点'], ['*补充*', '.cm-md-em', '补充'],
+    ['~~删除~~', '.cm-md-strike', '删除'], ['`代码`', '.cm-md-inline-code', '代码'],
+    ['[参考](https://example.com)', '.cm-md-link', '参考'],
+  ]) {
+    await editor(page).fill(''); await editor(page).pressSequentially(text);
+    await expect(editor(page)).toHaveText(text); await expect(page.locator(selector)).toHaveCount(0);
+    await editor(page).press('Space'); await expect(page.locator(selector)).toHaveText(visible);
+    await expect.poll(() => source(page)).toBe(`${text} `);
+    await page.locator('#note-title').focus(); await editor(page).focus();
+    await expect(page.locator(selector)).toHaveText(visible);
+  }
+  await editor(page).fill(''); await editor(page).pressSequentially('- [ ]');
+  await expect(page.locator('.cm-md-task')).toHaveCount(0);
+  await editor(page).press('Space'); await expect(page.locator('.cm-md-task')).toHaveCount(1);
+});
+
+test('asterisks can be completed into bold without an early bullet conversion', async ({ page }) => {
+  await editor(page).fill(''); await editor(page).pressSequentially('**');
+  await expect(editor(page)).toHaveText('**'); await expect(page.locator('.cm-md-bullet')).toHaveCount(0);
+  await editor(page).pressSequentially('重点**'); await expect(editor(page)).toHaveText('**重点**');
+  await expect(page.locator('.cm-md-pending')).toHaveCSS('font-weight', '400');
+  await page.locator('#note-title').focus(); await editor(page).focus();
+  await expect(editor(page)).toHaveText('**重点**');
+  await page.keyboard.insertText('内容'); await expect(editor(page)).toHaveText('**重点**内容');
+  await editor(page).press('Space'); await expect(page.locator('.cm-md-strong')).toHaveText('重点');
+  await expect(page.locator('.cm-md-strong')).toHaveCSS('font-weight', '700');
+  await editor(page).pressSequentially('继续'); await expect(page.locator('.cm-md-strong')).toHaveText('重点');
+  await expect.poll(() => source(page)).toBe('**重点**内容 继续');
+});
+
+test('cursor movement skips hidden syntax and edits formatted text without losing its markers', async ({ page }) => {
+  const markdown = '## 标题\n\n**重点**\n\n[参考](https://example.com)\n\n> 引用';
+  await editor(page).fill(markdown);
+  await page.locator('.cm-md-h2').click(); await editor(page).press('Home'); await page.keyboard.insertText('新');
+  await expect(page.locator('.cm-md-h2')).toHaveText('新标题');
+  await page.locator('.cm-md-strong').click(); await editor(page).press('Home');
+  await editor(page).press('ArrowRight'); await editor(page).press('Backspace');
+  await expect(page.locator('.cm-md-strong')).toHaveText('点');
+  await editor(page).press('End'); await page.keyboard.insertText('补充');
+  await expect(page.locator('.cm-md-strong')).toHaveText('点补充');
+  await page.locator('.cm-md-link').click(); await editor(page).press('End'); await page.keyboard.insertText('链接');
+  await expect(page.locator('.cm-md-link')).toHaveText('参考链接');
+  await page.locator('.cm-md-quote').click(); await editor(page).press('Home'); await page.keyboard.insertText('新');
+  await expect(page.locator('.cm-md-quote')).toHaveText('新引用');
+  const expected = '## 新标题\n\n**点补充**\n\n[参考链接](https://example.com)\n\n> 新引用';
+  await expect.poll(() => source(page)).toBe(expected);
+  await page.reload(); await expect(page.locator('.cm-md-strong')).toHaveText('点补充');
+  expect(await source(page)).toBe(expected);
+});
+
+test('table cells edit in place, preserve inline formatting, navigate and undo without showing source', async ({ page }) => {
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const markdown = '| 主题 | 状态 |\n| --- | --- |\n| **重点** | |';
+  await editor(page).fill(markdown); await page.locator('#note-title').focus();
+  const first = page.getByRole('textbox', { name: '表格第 2 行第 1 列', exact: true });
+  const second = page.getByRole('textbox', { name: '表格第 2 行第 2 列', exact: true });
+  await first.click(); await first.press('End'); await page.keyboard.insertText('补充');
+  await expect.poll(() => source(page)).toContain('**重点补充**');
+  await expect(first.locator('strong')).toHaveText('重点补充');
+  await first.press('Tab'); await expect(second).toBeFocused();
+  await second.fill('进行中'); await second.press('End'); await page.keyboard.insertText('状态');
+  await expect.poll(() => source(page)).toContain('进行中状态');
+  await second.press('Control+z'); await expect(second).toHaveText('进行中');
+  await expect.poll(() => source(page)).not.toContain('进行中状态');
+  await second.press('Control+y'); await expect(second).toHaveText('进行中状态');
+  await second.press('Shift+Tab'); await expect(first).toBeFocused();
+  await page.locator('#note-title').focus(); await first.click();
+  await expect(first).toHaveText('重点补充'); await expect(page.locator('.cm-note-table table')).toHaveCount(1);
+  const saved = await source(page); validateData(await read(page));
+  await page.reload(); expect(await source(page)).toBe(saved);
+  await expect(second).toHaveText('进行中状态'); expect(errors).toEqual([]);
+});
+
+test('deleting formatting boundaries or its last character leaves no orphaned Markdown markers', async ({ page }) => {
+  for (const [open, close] of [['**', '**'], ['*', '*'], ['~~', '~~'], ['`', '`'], ['[', '](https://example.com)']]) {
+    await editor(page).fill(`${open}重点${close}`); await editor(page).press('Home'); await editor(page).press('Backspace');
+    await expect.poll(() => source(page)).toBe('重点');
+    await editor(page).fill(`${open}重点${close}`); await editor(page).press('End'); await editor(page).press('Delete');
+    await expect.poll(() => source(page)).toBe('重点');
+    await editor(page).fill(`${open}字${close}`); await editor(page).press('End'); await editor(page).press('Backspace');
+    await expect.poll(() => source(page)).toBe('');
+  }
+  await editor(page).fill('**👨‍👩‍👦**'); await editor(page).press('End'); await editor(page).press('Backspace');
+  await expect.poll(() => source(page)).toBe('');
+});
+
+test('format buttons and shortcuts edit the selected table cell without changing other document content', async ({ page }) => {
+  await editor(page).fill('| 主题 | 状态 |\n| --- | --- |\n| 文字 | 内容 |');
+  const cell = page.getByRole('textbox', { name: '表格第 2 行第 1 列', exact: true });
+  await cell.click(); await cell.press('Control+a'); await page.getByRole('button', { name: '加粗', exact: true }).click();
+  await expect(cell.locator('strong')).toHaveText('文字');
+  await expect.poll(() => source(page)).toContain('| **文字** | 内容 |');
+  await cell.press('Control+a'); await cell.press('Control+k');
+  await expect(cell.locator('a')).toHaveText('文字');
+  await expect.poll(() => source(page)).toContain('[**文字**](https://example.com)');
+  await expect(page.getByRole('dialog', { name: '搜索全部', exact: true })).toHaveCount(0);
+  const before = await source(page);
+  await page.getByRole('button', { name: '标题', exact: true }).click();
+  expect(await source(page)).toBe(before); await expect(page.locator('.cm-note-table table')).toHaveCount(1);
+});
+
+test('refocusing images keeps the image visible and deletion can still be undone', async ({ page }) => {
+  await page.locator('#note-image-upload').setInputFiles({ name: '聚焦图片.png', mimeType: 'image/png', buffer: await pngFile(page) });
+  const image = page.locator('.cm-note-image img');
+  for (let index = 0; index < 2; index++) {
+    await page.locator('#note-title').focus(); await image.click(); await expect(image).toBeVisible();
+    await expect(editor(page)).not.toContainText('attachment:');
+  }
+  await page.getByRole('button', { name: '删除图片：聚焦图片.png', exact: true }).click();
+  await expect(image).toHaveCount(0); await editor(page).press('Control+z'); await expect(image).toBeVisible();
+});
+
+test('select-all replaces the entire rendered document including its table and can be undone', async ({ page }) => {
+  await editor(page).focus(); await editor(page).press('Control+a'); await page.keyboard.insertText('整篇替换');
+  await expect.poll(() => source(page)).toBe('整篇替换'); await expect(page.locator('.cm-note-table')).toHaveCount(0);
+  await editor(page).press('Control+z'); await expect.poll(() => source(page)).toBe(sample);
+  await expect(page.locator('.cm-note-table table')).toHaveCount(1);
+});
+
+test('table edits preserve padded columns, escaped pipes, pasted text and Chinese composition', async ({ page }) => {
+  await editor(page).fill('| 一 | 二 | 三 |\n| --- | --- | --- |\n| 原文 |\n| 下一行 | 内容 | 结尾 |');
+  const cell = page.getByRole('textbox', { name: '表格第 2 行第 3 列', exact: true });
+  await cell.fill('补齐'); await expect.poll(() => source(page)).toContain('| 原文 |  | 补齐 |');
+  const last = page.getByRole('textbox', { name: '表格第 3 行第 3 列', exact: true });
+  await last.fill('左|右'); await expect.poll(() => source(page)).toContain('左\\|右');
+  await last.press('End');
+  await last.evaluate(node => {
+    const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', '<img src=x onerror=alert(1)>\n下一行');
+    node.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+  });
+  await expect(last).toHaveText('左|右<img src=x onerror=alert(1)> 下一行'); await expect(last.locator('img')).toHaveCount(0);
+  const before = await source(page);
+  await cell.evaluate(node => {
+    node.focus(); node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); node.textContent = '中文输入';
+    node.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, inputType: 'insertCompositionText', data: '中文输入' }));
+  });
+  expect(await source(page)).toBe(before);
+  await cell.dispatchEvent('compositionend', { data: '中文输入' });
+  await expect.poll(() => source(page)).toContain('中文输入');
+  await expect(page.locator('.cm-note-table table')).toHaveCount(1);
 });
 
 test('note images and live editing remain available offline', async ({ page, context }) => {
