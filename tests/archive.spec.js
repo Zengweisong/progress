@@ -33,7 +33,7 @@ test('individual and completed task archives hide on routes and detail and resto
   await page.locator('.project-detail').getByRole('button', { name: `编辑任务：${task.title}`, exact: true }).click();
   await page.getByRole('button', { name: '归档事项', exact: true }).click();
   await expect(page.locator(`.project-detail [data-task-row="${task.id}"]`)).toHaveCount(0);
-  await page.getByRole('button', { name: '归档已完成事项', exact: true }).click();
+  await page.locator('.project-detail').getByRole('button', { name: '归档已完成事项', exact: true }).click();
   const archivedCount = p.tasks.filter(task => task.done).length + 1;
   await page.getByRole('button', { name: `已归档事项 ${archivedCount}`, exact: true }).click();
   await page.getByRole('button', { name: `恢复事项：${task.title}`, exact: true }).click();
@@ -56,9 +56,71 @@ test('individual projects archive and failed task and project writes roll back',
   await page.goto('/#projects/project/p1');
   const before = await read(page);
   await page.evaluate(key => { const original = Storage.prototype.setItem; Storage.prototype.setItem = function(name, value) { if (name === key) throw new DOMException('No room', 'QuotaExceededError'); return original.call(this, name, value); }; }, key);
-  await page.getByRole('button', { name: '归档已完成事项', exact: true }).click();
+  await page.locator('.project-detail').getByRole('button', { name: '归档已完成事项', exact: true }).click();
   expect(await read(page)).toEqual(before);
   await page.getByRole('button', { name: '归档项目', exact: true }).click();
   expect(await read(page)).toEqual(before);
   await expect(page.locator('.project-detail')).toBeVisible();
+});
+
+test('overview archives completed tasks across projects and views, preserving drafts and archived projects', async ({ page }) => {
+  const data = await read(page);
+  data.projects[0].tasks.find(task => task.done).archived = true;
+  data.projects.push({ ...structuredClone(data.projects[1]), id: 'archived-project', archived: true });
+  await page.evaluate(({ key, data }) => localStorage.setItem(key, JSON.stringify(data)), { key, data });
+  await page.reload();
+  const before = await read(page);
+  await page.getByRole('button', { name: '未完成', exact: true }).click();
+  await page.locator('#route-capture-body').fill('保留项目记录草稿');
+  const button = page.locator('[data-action="archive-all-completed-tasks"]');
+  await expect(button).toBeEnabled();
+  await button.click();
+  await expect(button).toBeDisabled();
+  await expect(page.locator('#route-capture-body')).toHaveValue('保留项目记录草稿');
+  const saved = await read(page); validateData(saved);
+  expect(saved.notes).toEqual(before.notes);
+  for (const project of before.projects) {
+    const actual = saved.projects.find(p => p.id === project.id);
+    expect(actual).toEqual(project.archived ? project : {
+      ...project, updatedAt: actual.updatedAt,
+      tasks: project.tasks.map(task => task.done ? { ...task, archived: true } : task),
+    });
+  }
+  for (const view of ['board', 'table', 'route']) {
+    await page.goto(`/?layout=${view}#projects`);
+    await expect(page.getByRole('button', { name: '归档已完成事项', exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    expect(await read(page)).toEqual(saved);
+  }
+  const project = saved.projects[1], task = project.tasks.find(task => task.done);
+  await page.goto(`/#projects/project/${project.id}`);
+  await page.locator('.project-detail [data-action="task-archives"]').click();
+  await page.getByRole('button', { name: `恢复事项：${task.title}`, exact: true }).click();
+  expect((await read(page)).projects[1].tasks.find(t => t.id === task.id)).toEqual({ ...task, archived: false });
+});
+
+test('overview task archive can be undone as one operation', async ({ page }) => {
+  const before = await read(page);
+  await page.getByRole('button', { name: '归档已完成事项', exact: true }).click();
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Control+z');
+  const withoutTime = value => JSON.parse(JSON.stringify(value, (key, value) => key === 'updatedAt' ? undefined : value));
+  await expect.poll(async () => withoutTime(await read(page))).toEqual(withoutTime(before));
+  await expect(page.getByRole('button', { name: '归档已完成事项', exact: true })).toBeEnabled();
+});
+
+test('failed overview task archive preserves all projects in storage and on screen', async ({ page }) => {
+  const before = await read(page);
+  const completed = before.projects.flatMap(p => p.tasks.filter(task => task.done));
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(name, value) {
+      if (name === key) throw new DOMException('No room', 'QuotaExceededError');
+      return original.call(this, name, value);
+    };
+  }, key);
+  await page.getByRole('button', { name: '归档已完成事项', exact: true }).click();
+  expect(await read(page)).toEqual(before);
+  for (const task of completed) await expect(page.locator(`[data-route-task="${task.id}"]`)).toHaveCount(1);
+  await expect(page.getByRole('button', { name: '归档已完成事项', exact: true })).toBeEnabled();
 });

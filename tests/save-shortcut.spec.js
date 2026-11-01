@@ -47,6 +47,36 @@ for (const kind of ['project', 'task']) test(`Ctrl+S works inside the ${kind} Ma
   await page.reload(); await expect.poll(saved).toBe('**说明内容**');
 });
 
+for (const kind of ['project', 'task']) test(`Ctrl+S retries the failed ${kind} description draft after storage recovers`, async ({ page }) => {
+  await page.goto('/#projects/project/p1');
+  const editor = kind === 'project' ? page.getByRole('textbox', { name: '项目说明', exact: true }) : page.locator('[data-task-description="p1-t0"] .cm-content');
+  const saved = async () => { const project = (await read(page)).projects[0]; return kind === 'project' ? project.description : project.tasks[0].description; };
+  const before = await saved();
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    window.rejectDescriptionWrite = true;
+    Storage.prototype.setItem = function(name, value) {
+      if (window.rejectDescriptionWrite && name === key) throw new DOMException('No room', 'QuotaExceededError');
+      return original.call(this, name, value);
+    };
+  }, key);
+  const body = `恢复保存后的${kind}说明`;
+  await editor.fill(body);
+  await expect(page.locator('#toast')).toContainText('保存失败');
+  expect(await saved()).toBe(before);
+  await editor.press('Control+s');
+  await expect(page.locator('#toast')).toContainText('保存失败');
+  expect(await saved()).toBe(before);
+  await page.evaluate(() => { window.rejectDescriptionWrite = false; });
+  await editor.press('Control+s');
+  await expect(page.locator('#toast')).toHaveText('已保存到本机。');
+  await expect.poll(saved).toBe(body);
+  await page.reload();
+  await expect.poll(saved).toBe(body);
+  const source = await editor.evaluate(async node => (await import('/vendor/editor/codemirror.js')).EditorView.findFromDOM(node).state.doc.toString());
+  expect(source).toBe(body);
+});
+
 test('Ctrl+S submits quick capture once and leaves an empty capture alone', async ({ page }) => {
   const before = (await read(page)).notes.length, input = page.locator('#route-capture-body');
   await input.fill('用快捷键保存快速记录'); await input.press('Control+s');
@@ -55,6 +85,26 @@ test('Ctrl+S submits quick capture once and leaves an empty capture alone', asyn
   await expect(input).toHaveValue(''); await input.press('Control+s');
   await expect(page.locator('#toast')).toHaveText('已保存到本机。');
   expect((await read(page)).notes.length).toBe(before + 1);
+});
+
+test('another successful project action also persists a failed description draft', async ({ page }) => {
+  await page.goto('/#projects/project/p1');
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    window.rejectDescriptionWrite = true;
+    Storage.prototype.setItem = function(name, value) {
+      if (window.rejectDescriptionWrite && name === key) throw new DOMException('No room', 'QuotaExceededError');
+      return original.call(this, name, value);
+    };
+  }, key);
+  const editor = page.getByRole('textbox', { name: '项目说明', exact: true });
+  await editor.fill('其他操作成功时也必须保存这段说明');
+  await expect(page.locator('#toast')).toContainText('保存失败');
+  await page.evaluate(() => { window.rejectDescriptionWrite = false; });
+  await page.locator('[data-action="toggle-pin"]').click();
+  await expect.poll(async () => (await read(page)).projects[0].description).toBe('其他操作成功时也必须保存这段说明');
+  await page.reload();
+  await expect(editor).toHaveText('其他操作成功时也必须保存这段说明');
 });
 
 test('Ctrl+S adds a pending task and saves task edits from the dialog', async ({ page }) => {
@@ -92,12 +142,16 @@ test('failed Ctrl+S form writes keep the draft and durable task unchanged', asyn
   const title = page.getByRole('textbox', { name: '任务名称', exact: true }); await title.fill('保存失败的草稿');
   await page.evaluate(key => {
     const original = Storage.prototype.setItem;
-    Storage.prototype.setItem = function(name, value) { if (name === key) throw new DOMException('No room', 'QuotaExceededError'); return original.call(this, name, value); };
+    window.rejectWorkspaceWrite = true;
+    Storage.prototype.setItem = function(name, value) { if (window.rejectWorkspaceWrite && name === key) throw new DOMException('No room', 'QuotaExceededError'); return original.call(this, name, value); };
   }, key);
   await title.press('Control+s'); await expect(page.locator('#toast')).toContainText('保存失败');
   await expect(title).toHaveValue('保存失败的草稿'); expect(await read(page)).toEqual(before);
-  expect(await cancelSave(title)).toBe(true); await expect(page.locator('#toast')).toContainText('保存受阻');
+  expect(await cancelSave(title)).toBe(true); await expect(page.locator('#toast')).toContainText('保存失败');
   expect(await read(page)).toEqual(before);
+  await page.evaluate(() => { window.rejectWorkspaceWrite = false; });
+  await title.press('Control+s'); await expect(page.locator('#task-edit-form')).toHaveCount(0);
+  expect((await read(page)).projects[0].tasks[0].title).toBe('保存失败的草稿');
 });
 
 test('save is intercepted inside the account dialog without submitting credentials', async ({ page }) => {

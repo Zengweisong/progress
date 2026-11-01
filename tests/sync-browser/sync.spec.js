@@ -226,10 +226,10 @@ test('conflicting offline edits keep both versions and downloadable recovery', a
     await editProject(page, '电脑保留另一版'); await sync(page);
     await b.context.setOffline(false); await openSync(b.page);
     await expect(dialog(b.page).locator('[data-sync-status]')).toHaveText('有冲突待处理', { timeout: 20000 });
-    await b.page.screenshot({ path: 'docs/screenshots/sync-conflicts-desktop.png', animations: 'disabled' });
+    await b.page.screenshot({ path: testInfo.outputPath('sync-conflicts-desktop.png'), animations: 'disabled' });
     await b.page.setViewportSize({ width: 390, height: 844 });
     expect(await b.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await b.page.screenshot({ path: 'docs/screenshots/sync-conflicts-mobile.png', animations: 'disabled' });
+    await b.page.screenshot({ path: testInfo.outputPath('sync-conflicts-mobile.png'), animations: 'disabled' });
     await expect(dialog(b.page).getByRole('button', { name: '退出账号', exact: true })).toHaveCount(0);
     await b.page.getByRole('button', { name: '合并并保留冲突副本', exact: true }).click();
     await expect(dialog(b.page).locator('[data-sync-status]')).toHaveText('已同步');

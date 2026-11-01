@@ -44,15 +44,16 @@ export function createSyncClient({ space, storageKey, getData, applyData, canSyn
     }
     return !bindingChanged;
   }
-  async function request(path, { method = 'GET', body } = {}) {
+  async function request(path, { method = 'GET', body, etag } = {}) {
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 12000);
     try {
       const response = await fetch(`/api/${path}`, {
         method, credentials: 'same-origin', cache: 'no-store', signal: abort.signal,
-        headers: { Accept: 'application/json', 'X-Shixu-Templates': '1', ...(method !== 'GET' ? { 'Content-Type': 'application/json', 'X-Shixu-Request': '1' } : {}) },
+        headers: { Accept: 'application/json', 'X-Shixu-Templates': '1', ...(etag ? { 'If-None-Match': etag } : {}), ...(method !== 'GET' ? { 'Content-Type': 'application/json', 'X-Shixu-Request': '1' } : {}) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
+      if (response.status === 304 && etag) return { notModified: true };
       let result;
       try { result = await response.json(); } catch { throw Object.assign(new Error('同步服务未正确响应，请检查服务器是否已更新。'), { status: response.status }); }
       if (!response.ok) throw Object.assign(new Error(result.error || '同步请求失败，请稍后重试。'), { status: response.status, code: result.code, detail: result });
@@ -207,7 +208,9 @@ export function createSyncClient({ space, storageKey, getData, applyData, canSyn
       for (let attempt = 0; attempt < 4; attempt += 1) {
         const localGeneration = generation, local = snapshot();
         emit('syncing');
-        const remote = verifyRemote(await request(`workspace?space=${space}`));
+        const baseline = meta.baseData, revision = meta.baseRevision;
+        const response = await request(`workspace?space=${space}`, { etag: baseline ? `"${user.id}:${space}:${revision}:templates-v1"` : undefined });
+        const remote = verifyRemote(response.notModified ? { userId: user.id, revision, data: clone(baseline) } : response);
         if (expectedEpoch !== epoch || stopped) return;
         if (!await refreshOwnership()) return;
         if (localGeneration !== generation || !canSync() || !equalData(snapshot(), local)) continue;

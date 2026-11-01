@@ -57,15 +57,23 @@ test('one editable Markdown surface renders GFM safely and persists the original
 test('formatting, keyboard shortcuts and export use Markdown in the single editor', async ({ page }) => {
   await page.goto('/#knowledge/note/n1');
   const editor = page.getByRole('textbox', { name: '笔记正文', exact: true });
-  await editor.fill('重要内容'); await editor.press('Control+a');
+  const replaceDocument = async text => {
+    // Select the CodeMirror document, including its hidden Markdown syntax.
+    // fill() only changes the DOM selection and may retain a formatting
+    // command's model selection inside an existing link or emphasis span.
+    await editor.focus(); await editor.press('Control+a');
+    if (text) await page.keyboard.insertText(text); else await editor.press('Backspace');
+    await expect.poll(() => source(page)).toBe(text);
+  };
+  await replaceDocument('重要内容'); await editor.press('Control+a');
   await page.getByRole('button', { name: '加粗', exact: true }).click();
   await expect.poll(() => source(page)).toBe('**重要内容**');
-  await editor.fill('链接文字'); await editor.press('Control+a'); await editor.press('Control+k');
+  await replaceDocument('链接文字'); await editor.press('Control+a'); await editor.press('Control+k');
   await expect.poll(() => source(page)).toBe('[链接文字](https://example.com)');
   await expect(page.getByRole('dialog', { name: '搜索全部' })).toHaveCount(0);
-  await editor.fill('快捷键'); await editor.press('Control+a'); await editor.press('Control+b');
+  await replaceDocument('快捷键'); await editor.press('Control+a'); await editor.press('Control+b');
   await expect.poll(() => source(page)).toBe('**快捷键**');
-  await editor.fill(''); await page.getByRole('button', { name: '插入表格', exact: true }).click();
+  await replaceDocument(''); await page.getByRole('button', { name: '插入表格', exact: true }).click();
   const saved = '| 标题 | 内容 |\n| --- | --- |\n| 项目 | 说明 |';
   await expect.poll(() => source(page)).toBe(saved);
   const event = page.waitForEvent('download'); await page.getByRole('button', { name: '导出 .md', exact: true }).click();

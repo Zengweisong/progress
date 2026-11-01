@@ -139,6 +139,7 @@ export function createSyncAPI({
     removeExpired: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
     trimSessions: db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN (SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 20)'),
     workspace: db.prepare('SELECT revision, data, updated_at FROM workspaces WHERE user_id = ? AND space = ?'),
+    workspaceRevision: db.prepare('SELECT revision FROM workspaces WHERE user_id = ? AND space = ?'),
     saveWorkspace: db.prepare('INSERT INTO workspaces (user_id, space, revision, data, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, space) DO UPDATE SET revision = excluded.revision, data = excluded.data, updated_at = excluded.updated_at'),
     addHistory: db.prepare('INSERT INTO workspace_history (user_id, space, revision, data, updated_at) VALUES (?, ?, ?, ?, ?)'),
     trimHistory: db.prepare('DELETE FROM workspace_history WHERE user_id = ? AND space = ? AND revision NOT IN (SELECT revision FROM workspace_history WHERE user_id = ? AND space = ? ORDER BY revision DESC LIMIT 20)'),
@@ -302,7 +303,15 @@ export function createSyncAPI({
       }
       const user = requireUser(req);
       const space = workspaceSpace(url);
-      if (req.method === 'GET') { send(res, 200, envelope(user.id, sql.workspace.get(user.id, space), req)); return true; }
+      if (req.method === 'GET') {
+        const row = sql.workspaceRevision.get(user.id, space);
+        const etag = `"${user.id}:${space}:${row?.revision ?? 0}:${req.headers['x-shixu-templates'] === '1' ? 'templates-v1' : 'legacy'}"`;
+        res.setHeader('ETag', etag);
+        if (req.headers['if-none-match'] === etag) {
+          res.writeHead(304, { 'Cache-Control': 'no-store' }); res.end();
+        } else send(res, 200, envelope(user.id, sql.workspace.get(user.id, space), req));
+        return true;
+      }
       const body = await readJSON(req, WORKSPACE_LIMIT);
       if (body.expectedUserId !== user.id) {
         throw new APIError(409, '登录账号已发生变化，请刷新页面确认账号后再同步', 'account_changed');

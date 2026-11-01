@@ -111,6 +111,7 @@ export function validateData(value) {
   if (!Array.isArray(value.templates) || value.templates.length > 100) fail();
   const templateIds = new Set();
   for (const template of value.templates) {
+    if (template?.homeHidden !== undefined && typeof template.homeHidden !== 'boolean') fail();
     if (!template || !str(template.id, 100) || !template.id || templateIds.has(template.id) || !str(template.title, 200) || !template.title.trim() || !str(template.description, 500) || !str(template.body, 200000) || !str(template.glyph, 32) || !str(template.updatedAt, 50) || Number.isNaN(Date.parse(template.updatedAt)) || !validOrder(template)) fail();
     templateIds.add(template.id);
   }

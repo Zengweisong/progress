@@ -44,6 +44,23 @@ export function createDescriptionEditors({ getProject, saveTaskChange, notify })
     if (!entry) return false;
     entry.editor.focus(); return true;
   }
+  function hasUnappliedDrafts(workspace) {
+    for (const [key, body] of drafts) {
+      const [projectId, taskId] = JSON.parse(key), project = workspace.projects.find(item => item.id === projectId);
+      const target = taskId === null ? project : project?.tasks.find(task => task.id === taskId);
+      if (target && (target.description || '') !== body) return true;
+    }
+    return false;
+  }
+  function acceptSavedDrafts(workspace) {
+    for (const [key, body] of [...drafts]) {
+      const [projectId, taskId] = JSON.parse(key), project = workspace.projects.find(item => item.id === projectId);
+      const target = taskId === null ? project : project?.tasks.find(task => task.id === taskId);
+      if (!target) continue;
+      if (body || taskId === null) target.description = body; else delete target.description;
+      if (drafts.get(key) === body) drafts.delete(key);
+    }
+  }
   function withDrafts(workspace) {
     const copy = structuredClone(workspace);
     for (const [key, body] of drafts) {
@@ -54,5 +71,5 @@ export function createDescriptionEditors({ getProject, saveTaskChange, notify })
     }
     return copy;
   }
-  return { mount, preserveSelection, focus, withDrafts };
+  return { mount, preserveSelection, focus, withDrafts, hasUnappliedDrafts, acceptSavedDrafts };
 }

@@ -56,6 +56,39 @@ test('editing common template Markdown saves with Ctrl+S and applies the edited 
   expect((await read(page)).templates.find(t => t.id === 'meeting').title).toBe('我的会议流程');
 });
 
+test('dragging templates down hides them from home and dragging back restores them', async ({ page }) => {
+  const before = await read(page); await openPicker(page);
+  await drag(page, handle(page, 'meeting'), picker(page).locator('[data-template-zone="hidden"]'));
+  await expect(picker(page).locator('[data-template-zone="hidden"] [data-common-template="meeting"]')).toHaveCount(1);
+  expect((await read(page)).templates.find(t => t.id === 'meeting').homeHidden).toBe(true);
+  expect((await read(page)).notes).toEqual(before.notes);
+  await page.getByRole('button', { name: '关闭弹窗', exact: true }).click();
+  await expect(page.locator('#note-template-suggestions [data-common-template="meeting"]')).toHaveCount(0);
+  await page.reload(); await openPicker(page);
+  await expect(picker(page).locator('[data-template-zone="hidden"] [data-common-template="meeting"]')).toHaveCount(1);
+  await drag(page, handle(page, 'meeting'), picker(page).locator('[data-template-zone="home"] [data-common-template="weekly"]'));
+  await page.getByRole('button', { name: '关闭弹窗', exact: true }).click();
+  await expect(page.locator('#note-template-suggestions [data-common-template="meeting"]')).toHaveCount(1);
+});
+
+test('hidden templates remain usable, hiding supports undo, and failed writes keep the original visibility', async ({ page }) => {
+  await openPicker(page); const before = await read(page);
+  await handle(page, 'meeting').press('Alt+Shift+ArrowDown');
+  await page.keyboard.press('Control+z'); await expect.poll(async () => (await read(page)).templates).toEqual(before.templates);
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(name, value) { if (name === key) throw new DOMException('No room', 'QuotaExceededError'); return original.call(this, name, value); };
+  }, key);
+  await handle(page, 'meeting').press('Alt+Shift+ArrowDown');
+  expect((await read(page)).templates).toEqual(before.templates);
+  await expect(picker(page).locator('[data-template-zone="home"] [data-common-template="meeting"]')).toHaveCount(1);
+  await page.reload(); await openPicker(page);
+  await handle(page, 'meeting').press('Alt+Shift+ArrowDown');
+  await picker(page).locator('[data-template-zone="hidden"]').getByRole('button', { name: '从模板新建：会议记录', exact: true }).click();
+  await expect(picker(page)).toHaveCount(0);
+  expect((await read(page)).notes[0].body).toBe(before.templates.find(t => t.id === 'meeting').body);
+});
+
 test('cancel and undo keep common template edits separate from the open page', async ({ page }) => {
   const before = await read(page); await openPicker(page);
   await picker(page).getByRole('button', { name: '编辑模板：会议记录', exact: true }).click();
@@ -98,6 +131,13 @@ test('touch can reorder common template handles', async ({ page, isMobile }) => 
   for (let step = 1; step <= 16; step++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + (endX - x) * step / 16, y: y + (endY - y) * step / 16 }] });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect.poll(() => ids(page)).toEqual(['weekly', 'meeting', ...order.slice(2)]);
+  const source = await handle(page, 'weekly').boundingBox(), zone = await picker(page).locator('[data-template-zone="hidden"]').boundingBox();
+  const start = { x: source.x + source.width / 2, y: source.y + source.height / 2 }, end = { x: zone.x + zone.width / 2, y: zone.y + zone.height / 2 };
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
+  for (let step = 1; step <= 16; step++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: start.x + (end.x - start.x) * step / 16, y: start.y + (end.y - start.y) * step / 16 }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect(picker(page).locator('[data-template-zone="hidden"] [data-common-template="weekly"]')).toHaveCount(1);
+  expect((await read(page)).templates.find(t => t.id === 'weekly').homeHidden).toBe(true);
 });
 
 test('failed reorder writes leave the template grid and stored content unchanged', async ({ page }) => {
