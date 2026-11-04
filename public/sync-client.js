@@ -50,7 +50,7 @@ export function createSyncClient({ space, storageKey, getData, applyData, canSyn
     try {
       const response = await fetch(`/api/${path}`, {
         method, credentials: 'same-origin', cache: 'no-store', signal: abort.signal,
-        headers: { Accept: 'application/json', 'X-Shixu-Templates': '1', ...(etag ? { 'If-None-Match': etag } : {}), ...(method !== 'GET' ? { 'Content-Type': 'application/json', 'X-Shixu-Request': '1' } : {}) },
+        headers: { Accept: 'application/json', 'X-Shixu-Templates': '1', 'X-Shixu-Reviews': '1', ...(etag ? { 'If-None-Match': etag } : {}), ...(method !== 'GET' ? { 'Content-Type': 'application/json', 'X-Shixu-Request': '1' } : {}) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       if (response.status === 304 && etag) return { notModified: true };
@@ -209,7 +209,7 @@ export function createSyncClient({ space, storageKey, getData, applyData, canSyn
         const localGeneration = generation, local = snapshot();
         emit('syncing');
         const baseline = meta.baseData, revision = meta.baseRevision;
-        const response = await request(`workspace?space=${space}`, { etag: baseline ? `"${user.id}:${space}:${revision}:templates-v1"` : undefined });
+        const response = await request(`workspace?space=${space}`, { etag: baseline && Object.hasOwn(baseline, 'reviews') ? `"${user.id}:${space}:${revision}:templates-v1:reviews-v1"` : undefined });
         const remote = verifyRemote(response.notModified ? { userId: user.id, revision, data: clone(baseline) } : response);
         if (expectedEpoch !== epoch || stopped) return;
         if (!await refreshOwnership()) return;

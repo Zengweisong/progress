@@ -1,6 +1,7 @@
-const CACHE = 'shixu-shell-v28';
+const CACHE = 'shixu-shell-v29';
 const SHELL = [
   '/', '/index.html', '/layouts.html', '/designs.html', '/favicon.svg',
+  '/reviews.js', '/reviews.css',
   '/app.js', '/data.js', '/styles.css', '/designs.js', '/designs.css',
   '/workspace-route.css', '/project-tasks.js', '/select-control.js', '/project-tasks.css', '/route-task-drag.js', '/record-order.js',
   '/sidebar.js', '/sidebar.css', '/sidebar-create.js',

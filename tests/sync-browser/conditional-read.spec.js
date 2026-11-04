@@ -5,6 +5,29 @@ import { seedData } from '../../public/data.js';
 test.use({ serviceWorkers: 'block' });
 const key = 'shixu.workspace.v1';
 
+test('upgrading a legacy baseline fetches existing cloud reviews before uploading', async ({ page }) => {
+  await page.goto('/designs.html');
+  const response = await page.request.post('/api/register', { headers: { 'X-Shixu-Request': '1' }, data: { username: `upgrade-${randomUUID().slice(0, 12)}`, password: 'upgrade-password-12345' } });
+  const { user } = await response.json(), cloud = seedData();
+  cloud.reviews.push({ id: 'cloud-review', title: '已有复盘', mode: 'daily', date: '2026-11-04', values: { event: '升级前已在云端' }, updatedAt: '2026-11-04T01:00:00Z' });
+  const saved = await page.request.put('/api/workspace', { headers: { 'X-Shixu-Request': '1' }, data: { expectedUserId: user.id, expectedRevision: 0, data: cloud } });
+  expect(saved.ok()).toBe(true);
+  const legacy = structuredClone(cloud); delete legacy.reviews;
+  await page.evaluate(async ({ user, legacy, key }) => {
+    const { putSyncMeta } = await import('/sync-db.js');
+    await putSyncMeta('main', { version: 1, ownerId: user.id, user, baseRevision: 1, baseData: legacy, conflict: null });
+    window.syncData = structuredClone(legacy);
+    const { createSyncClient } = await import('/sync-client.js');
+    window.client = createSyncClient({ space: 'main', storageKey: key, getData: () => window.syncData, canSync: () => true, pollInterval: 600000, applyData: value => { window.syncData = value; return true; } });
+    await window.client.start();
+    await window.client.syncNow();
+  }, { user, legacy, key });
+  expect(await page.evaluate(() => window.syncData.reviews[0].values.event)).toBe('升级前已在云端');
+  const remote = await (await page.request.get('/api/workspace', { headers: { 'X-Shixu-Reviews': '1' } })).json();
+  expect(remote.data.reviews).toEqual(cloud.reviews);
+  await page.evaluate(() => window.client.destroy());
+});
+
 test('unchanged polls return no body, local edits upload, and long text restores on another device', async ({ page, browser }) => {
   const username = `conditional-${randomUUID().slice(0, 12)}`, password = 'conditional-password-12345';
   await page.goto('/designs.html');
@@ -28,7 +51,7 @@ test('unchanged polls return no body, local edits upload, and long text restores
   // Chromium does not expose a 304 body through its DevTools response API.
   // Read the response through fetch to verify that nothing was transferred.
   const empty = await page.evaluate(async etag => {
-    const response = await fetch('/api/workspace?space=main', { cache: 'no-store', headers: { 'If-None-Match': etag, 'X-Shixu-Templates': '1' } });
+    const response = await fetch('/api/workspace?space=main', { cache: 'no-store', headers: { 'If-None-Match': etag, 'X-Shixu-Templates': '1', 'X-Shixu-Reviews': '1' } });
     return { status: response.status, text: await response.text() };
   }, unchanged.headers().etag);
   expect(empty).toEqual({ status: 304, text: '' });

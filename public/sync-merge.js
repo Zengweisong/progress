@@ -3,7 +3,7 @@ import { taskStatus } from './project-tasks.js';
 import { defaultTemplates } from './note-templates.js';
 
 const ABSENT = Symbol('absent');
-const COLLECTIONS = ['projects', 'notes', 'fields', 'folders', 'templates'];
+const COLLECTIONS = ['projects', 'notes', 'fields', 'folders', 'templates', 'reviews'];
 const owns = (value, key) => value != null && Object.hasOwn(value, key);
 const at = (value, key) => owns(value, key) ? value[key] : ABSENT;
 const byId = records => new Map(records.map(record => [record.id, record]));
@@ -36,7 +36,7 @@ function equal(a, b, root = false, ignoreTimestamp = true) {
 export function equalData(a, b) { return equal(a, b, true); }
 
 export function emptyWorkspace() {
-  return { version: 1, projects: [], notes: [], fields: [], folders: [], templates: defaultTemplates(), preferences: { view: 'board', sort: 'updated', group: 'status' } };
+  return { version: 1, projects: [], notes: [], fields: [], folders: [], reviews: [], templates: defaultTemplates(), preferences: { view: 'board', sort: 'updated', group: 'status' } };
 }
 
 function workspace(value) { return validateData(copy(value ?? emptyWorkspace())); }
@@ -121,6 +121,8 @@ function runMerge(baseValue, localValue, remoteValue, choice) {
         merged.sort((a, b) => (positions.get(a.id) ?? Infinity) - (positions.get(b.id) ?? Infinity));
       } else if (collection === 'projects' && !path && key === 'custom') {
         merged = Object.fromEntries([...new Set([...Object.keys(l.custom), ...Object.keys(r.custom), ...Object.keys(b.custom)])].map(id => [id, scalar(at(b.custom, id), at(l.custom, id), at(r.custom, id), () => conflict(collection, ownerId, `自定义字段在两端修改：${id}`))]).filter(([, value]) => value !== ABSENT));
+      } else if (collection === 'reviews' && key === 'values') {
+        merged = Object.fromEntries([...new Set([...Object.keys(b.values), ...Object.keys(l.values), ...Object.keys(r.values)])].map(id => [id, scalar(at(b.values, id), at(l.values, id), at(r.values, id), () => conflict(collection, ownerId, `复盘内容在两端修改：${id}`))]).filter(([, value]) => value !== ABSENT));
       } else if (collection === 'notes' && (key === 'tags' || key === 'projectIds')) {
         merged = mergeSet(bv, lv, rv);
       } else {
@@ -225,7 +227,7 @@ function runMerge(baseValue, localValue, remoteValue, choice) {
 }
 
 function checked(data) {
-  if (data.projects.length > 3000 || data.notes.length > 10000 || data.fields.length > 30 || data.folders.length > 300 || data.templates.length > 100) throw new Error('合并后的记录数量超过工作区上限，请先导出备份并整理记录。');
+  if (data.projects.length > 3000 || data.notes.length > 10000 || data.fields.length > 30 || data.folders.length > 300 || data.templates.length > 100 || data.reviews.length > 10000) throw new Error('合并后的记录数量超过工作区上限，请先导出备份并整理记录。');
   return validateData(copy(data));
 }
 
@@ -264,6 +266,9 @@ export function resolveWorkspaceConflicts(base, local, remote, choice) {
     data.templates.push({ ...copy(conflict.remote), id: newIds.templates(conflict.id), title: duplicateTitle(conflict.remote.title, 200) });
   }
 
+  for (const conflict of duplicates.filter(item => item.collection === 'reviews')) {
+    data.reviews.push({ ...copy(conflict.remote), id: newIds.reviews(conflict.id), title: duplicateTitle(conflict.remote.title, 200) });
+  }
   for (const conflict of duplicates.filter(item => item.collection === 'folders')) {
     data.folders.push({ ...copy(conflict.remote), id: newIds.folders(conflict.id) });
   }

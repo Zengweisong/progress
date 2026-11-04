@@ -1,3 +1,4 @@
+import { validReview } from './reviews.js';
 import { defaultTemplates } from './note-templates.js';
 
 export const statuses = [
@@ -38,6 +39,7 @@ export function seedData() {
       note('n6', '旅行时的轻装清单', '需要带上的不一定很多，留下空间给路上的发现。', '生活记录', ['旅行'], ['p5'], '# 旅行时的轻装清单\n\n## 随身\n\n- 证件、手机、充电宝。\n- 一件保暖外套。\n- 相机和一支常用镜头。\n\n## 出发前\n\n确认天气、交通和住宿地址，并把重要信息保存到本地。'),
       note('n7', '一个关于快速记录的想法', '想到的时候，应该可以先写下来，不必先决定放在哪里。', '产品与设计', ['灵感'], [], '# 一个关于快速记录的想法\n\n如果每次记录都要先选项目、分类和标签，很多想法可能就不会被记下来。\n\n收集箱可以承接这些还没整理的内容。等有空时，再把它们与项目连接起来。', true),
     ],
+    reviews: [],
     fields: [],
     folders: [], templates: defaultTemplates(),
     preferences: { view: 'board', sort: 'updated', group: 'status' },
@@ -114,6 +116,13 @@ export function validateData(value) {
     if (template?.homeHidden !== undefined && typeof template.homeHidden !== 'boolean') fail();
     if (!template || !str(template.id, 100) || !template.id || templateIds.has(template.id) || !str(template.title, 200) || !template.title.trim() || !str(template.description, 500) || !str(template.body, 200000) || !str(template.glyph, 32) || !str(template.updatedAt, 50) || Number.isNaN(Date.parse(template.updatedAt)) || !validOrder(template)) fail();
     templateIds.add(template.id);
+  }
+  if (value.reviews === undefined) value.reviews = [];
+  if (!Array.isArray(value.reviews) || value.reviews.length > 10000) fail();
+  const reviewIds = new Set();
+  for (const review of value.reviews) {
+    if (!validReview(review) || reviewIds.has(review.id)) fail();
+    reviewIds.add(review.id);
   }
   const prefs = value.preferences;
   value.preferences = { view: prefs?.view === 'table' ? 'table' : 'board', sort: ['updated', 'title', 'due', 'manual'].includes(prefs?.sort) ? prefs.sort : 'updated', group: prefs?.group === 'priority' ? 'priority' : 'status' };

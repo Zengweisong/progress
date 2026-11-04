@@ -222,10 +222,11 @@ export function createSyncAPI({
     } finally { activeHashes--; }
   }
   function workspaceResponse(req, value) {
-    if (req.headers['x-shixu-templates'] === '1' || !value.data) return value;
-    // Older clients discard unknown root collections during their three-way
-    // merge. Returning templates to them would trigger endless upload retries.
-    const { templates, ...data } = value.data;
+    if (!value.data) return value;
+    // Older clients discard unknown collections during their three-way merge.
+    const data = { ...value.data };
+    if (req.headers['x-shixu-templates'] !== '1') delete data.templates;
+    if (req.headers['x-shixu-reviews'] !== '1') delete data.reviews;
     return { ...value, data };
   }
   function envelope(userId, row, req) {
@@ -305,7 +306,7 @@ export function createSyncAPI({
       const space = workspaceSpace(url);
       if (req.method === 'GET') {
         const row = sql.workspaceRevision.get(user.id, space);
-        const etag = `"${user.id}:${space}:${row?.revision ?? 0}:${req.headers['x-shixu-templates'] === '1' ? 'templates-v1' : 'legacy'}"`;
+        const etag = `"${user.id}:${space}:${row?.revision ?? 0}:${req.headers['x-shixu-templates'] === '1' ? 'templates-v1' : 'legacy'}:${req.headers['x-shixu-reviews'] === '1' ? 'reviews-v1' : 'legacy-reviews'}"`;
         res.setHeader('ETag', etag);
         if (req.headers['if-none-match'] === etag) {
           res.writeHead(304, { 'Cache-Control': 'no-store' }); res.end();
@@ -329,6 +330,7 @@ export function createSyncAPI({
         }
         // Older clients do not send common-template records. Their note edits
         // must not replace customized templates with the built-in defaults.
+        if (current && body.data.reviews === undefined) data.reviews = validateWorkspace(JSON.parse(current.data)).reviews;
         if (current && body.data.templates === undefined) data.templates = validateWorkspace(JSON.parse(current.data)).templates;
         const nextRevision = body.expectedRevision + 1;
         const timestamp = new Date().toISOString();

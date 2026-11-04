@@ -1,4 +1,4 @@
-export const sectionNames = { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹' };
+export const sectionNames = { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹', reviews: '复盘' };
 export const categoryField = section => section === 'projects' ? 'tag' : 'category';
 export const isNoteFavorite = note => note.favorite ?? note.inbox;
 

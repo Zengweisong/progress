@@ -1,3 +1,4 @@
+import { renderReviews, dateKey, shiftDate, reviewPeriod } from './reviews.js';
 import { orderedRecords, moveRecord, moveCategory, installRecordDrag } from './record-order.js';
 import { installSidebarControls } from './sidebar.js';
 import { installSidebarCreateMenu } from './sidebar-create.js';
@@ -92,6 +93,7 @@ if (workspaceViews.includes(requestedView)) {
   try { localStorage.setItem(LAYOUT_KEY, workspaceView); } catch { /* Render the requested layout even when its preference cannot be saved. */ }
   entryURL.searchParams.delete('layout'); history.replaceState(null, '', entryURL);
 }
+const reviewState = { mode: 'daily', date: dateKey(), selected: null };
 const moduleTaskDrafts = new Map();
 const routeModuleTargets = new Map();
 const routeState = { selectedProject: null, filter: 'all', kind: 'note', drafts: new Map(), projectOrder: null };
@@ -293,7 +295,7 @@ const fmtDate = value => value ? `${Number(value.slice(5, 7))} 月 ${Number(valu
 const statusBy = id => statuses.find(s => s.id === id) || statuses[0];
 function route() {
   let parts; try { parts = location.hash.slice(1).split('/').map(decodeURIComponent); } catch { parts = []; }
-  const section = ['projects', 'knowledge', 'inbox'].includes(parts[0]) ? parts[0] : 'projects';
+  const section = ['projects', 'knowledge', 'inbox', 'reviews'].includes(parts[0]) ? parts[0] : 'projects';
   const grouped = parts[1] === 'category';
   return { section, category: grouped ? parts[2] || '' : null, kind: parts[grouped ? 3 : 1], id: parts[grouped ? 4 : 2] };
 }
@@ -406,7 +408,7 @@ function sidebar() {
     <button class="workspace" data-action="account"><span class="workspace-avatar">我</span><span class="workspace-text"><strong>我的个人空间</strong></span>${icon('down')}</button>
     <div class="sidebar-shortcuts" role="group" aria-label="快捷操作"><button class="nav-item nav-search" data-action="search">${icon('search')}<span>搜索全部</span><kbd>Ctrl K</kbd></button><button class="nav-item" data-action="quick-note">${icon('plus')}<span>快速记录</span><kbd>N</kbd></button></div>
     <div class="nav-caption">工作空间</div>
-    <nav>${categoryNav('projects', 'grid')}${categoryNav('knowledge', 'book')}${categoryNav('inbox', 'star')}</nav>
+    <nav>${categoryNav('projects', 'grid')}${categoryNav('knowledge', 'book')}${categoryNav('inbox', 'star')}${navItem('reviews', 'review', '复盘')}</nav>
     ${pinned.length ? `<div class="side-divider"></div><div class="pinned-heading"><div class="nav-caption">已置顶</div>${icon('pin', 'style="width:12px;height:12px;color:#b6becd;margin-right:16px"')}</div>${pinned.map(p => `<a class="pinned-link" href="#projects/project/${esc(p.id)}"><span class="pin-dot ${esc(p.color)}"></span><span>${esc(p.title)}</span></a>`).join('')}` : ''}
     <div class="sidebar-bottom"><button class="profile" data-action="settings"><span class="avatar">我</span><span><strong>本地工作区</strong><small>数据与备份</small></span>${icon('settings')}</button></div>
   </aside><div class="sidebar-resizer" data-sidebar-resize role="separator" tabindex="0" aria-label="调整侧边栏宽度" aria-orientation="vertical" aria-controls="workspace-sidebar" aria-valuemin="200" aria-valuemax="400" aria-valuenow="234" title="拖动调整侧边栏宽度；左右方向键微调"></div>`;
@@ -422,7 +424,7 @@ function topbar() {
     <div class="top-actions"><button class="save-state ${storageError ? 'error' : ''}" data-action="settings" aria-label="查看本机保存与备份状态">${icon(storageError ? 'help' : 'checkCircle')}${storageError ? '尚未保存' : '本机已保存'}</button><a class="icon-button" href="/layouts.html" aria-label="四种布局探索" title="四种布局探索">${icon('grid')}</a><a class="icon-button" href="/designs.html" aria-label="Apple Design 版面探索" title="版面探索">${icon('layout')}</a>${themeButton()}${syncButton()}<button class="icon-button" data-action="search" aria-label="搜索">${icon('search')}</button><button class="avatar top-avatar" data-action="account" aria-label="个人账号">我</button></div></header>`;
 }
 function mobileNav() {
-  return `<nav class="mobile-nav" aria-label="手机导航">${[['projects', 'grid', '项目'], ['knowledge', 'book', '知识'], ['inbox', 'star', '收藏夹']].map(([section, name, label]) => `<a href="#${section}" class="${route().section === section ? 'active' : ''}" ${route().section === section ? 'aria-current="page"' : ''}>${icon(name)}${label}</a>`).join('')}<button class="mobile-create" data-action="quick-note">${icon('plus')}记录</button><button data-action="settings">${icon('settings')}设置</button></nav>`;
+  return `<nav class="mobile-nav" aria-label="手机导航">${[['projects', 'grid', '项目'], ['knowledge', 'book', '知识'], ['inbox', 'star', '收藏夹'], ['reviews', 'review', '复盘']].map(([section, name, label]) => `<a href="#${section}" class="${route().section === section ? 'active' : ''}" ${route().section === section ? 'aria-current="page"' : ''}>${icon(name)}${label}</a>`).join('')}<button class="mobile-create" data-action="quick-note">${icon('plus')}记录</button><button data-action="settings">${icon('settings')}设置</button></nav>`;
 }
 function projectCard(p) {
   const count = p.tasks.filter(t => t.done).length;
@@ -631,12 +633,12 @@ function modalMarkup() {
     const n = getNote(modal.id);
     return modalShell('关联项目', `<form id="link-projects-form"><div class="check-list">${data.projects.map(p => `<label class="check-item"><input type="checkbox" name="projects" value="${esc(p.id)}" ${n?.projectIds.includes(p.id) ? 'checked' : ''}>${icon(p.icon)}${esc(p.title)}</label>`).join('') || '<p class="drawer-muted">先创建一个项目，再来建立关联。</p>'}</div>${formActions('保存关联')}</form>`);
   }
-  if (modal.type === 'settings') return modalShell('数据与备份', `<p class="modal-subtitle">记录自动保存在本机。登录账号可启用多端同步，也可以随时导出备份。</p>${storageError ? `<div class="notice" role="alert">${esc(storageError)}。请先导出当前内容再重新加载，以免丢失尚未保存的编辑。</div>` : ''}<div class="data-actions"><button class="data-action" data-action="export">${icon('download')}<span><strong>导出完整数据</strong><small>JSON 格式 · 包含项目、任务、笔记和关联</small></span>${icon('chevron')}</button><button class="data-action" data-action="import">${icon('upload')}<span><strong>导入为独立副本</strong><small>保留现有内容，使用新的记录 ID 导入</small></span>${icon('chevron')}</button><button class="data-action" data-action="trash">${icon('trash')}<span><strong>本机回收站</strong><small>恢复误删的项目、任务和笔记</small></span>${icon('chevron')}</button><button class="data-action" data-action="help">${icon('help')}<span><strong>使用与快捷键</strong><small>了解当前原型可以体验的功能</small></span>${icon('chevron')}</button></div><p class="modal-subtitle" style="margin:20px 0 0">当前有 ${data.projects.length} 个项目、${data.notes.length} 篇笔记。<br>清理浏览器数据可能移除本地内容，请定期导出。</p><input type="file" id="import-file" accept=".json,application/json" hidden>`);
+  if (modal.type === 'settings') return modalShell('数据与备份', `<p class="modal-subtitle">记录自动保存在本机。登录账号可启用多端同步，也可以随时导出备份。</p>${storageError ? `<div class="notice" role="alert">${esc(storageError)}。请先导出当前内容再重新加载，以免丢失尚未保存的编辑。</div>` : ''}<div class="data-actions"><button class="data-action" data-action="export">${icon('download')}<span><strong>导出完整数据</strong><small>JSON 格式 · 包含项目、任务、笔记、复盘和关联</small></span>${icon('chevron')}</button><button class="data-action" data-action="import">${icon('upload')}<span><strong>导入为独立副本</strong><small>保留现有内容，使用新的记录 ID 导入</small></span>${icon('chevron')}</button><button class="data-action" data-action="trash">${icon('trash')}<span><strong>本机回收站</strong><small>恢复误删的项目、任务和笔记</small></span>${icon('chevron')}</button><button class="data-action" data-action="help">${icon('help')}<span><strong>使用与快捷键</strong><small>了解当前原型可以体验的功能</small></span>${icon('chevron')}</button></div><p class="modal-subtitle" style="margin:20px 0 0">当前有 ${data.projects.length} 个项目、${data.notes.length} 篇笔记。<br>清理浏览器数据可能移除本地内容，请定期导出。</p><input type="file" id="import-file" accept=".json,application/json" hidden>`);
   if (modal.type === 'help') return modalShell('从一个小进展开始', `<p class="body-copy">项目卡片可以拖动。打开项目后，可以更新状态、完成任务，并把已有笔记关联进来。知识库中的同一篇笔记可以关联多个项目。</p><div class="notice">项目、任务和笔记自动保存在本机。在“账号与多端同步”中登录并连接工作区后，修改会自动上传，页面每 15 秒检查其他设备的更新。编辑中或有未保存草稿时暂缓同步；断网可继续记录，联网后自动重试。自定义属性在表格视图添加。笔记支持插入、粘贴和拖入图片；删除后可从本机回收站恢复。</div><div class="help-shortcuts"><span>搜索全部内容</span><kbd>Ctrl / ⌘ K</kbd><span>快速记下想法</span><kbd>N</kbd><span>保存当前内容</span><kbd>Ctrl / ⌘ S</kbd><span>撤销删除、排序和事项修改</span><kbd>Ctrl / ⌘ Z</kbd><span>关闭当前弹窗或详情</span><kbd>Esc</kbd></div>`);
   if (modal.type === 'trash') return modalShell('本机回收站', `<p class="body-copy">当前设备与工作区的删除副本。恢复后可以继续同步；其他设备的回收站独立保存。</p><div class="trash-list">${trashRecords.map(item => `<div class="trash-row"><div><strong>${esc(item.label)}</strong><small>${{ project: '项目（含任务）', note: '笔记', task: '任务' }[item.data.kind]} · ${esc(new Date(item.createdAt).toLocaleString('zh-CN'))}</small></div><div class="trash-actions"><button type="button" class="button small" data-action="restore-trash" data-id="${esc(item.id)}" aria-label="恢复：${esc(item.label)}">恢复</button><button type="button" class="danger-link" data-action="delete-trash" data-id="${esc(item.id)}" aria-label="永久删除：${esc(item.label)}">永久删除</button></div></div>`).join('') || '<p class="body-copy">回收站为空。</p>'}</div>`);
   if (modal.type === 'confirm-purge') return modalShell('永久删除恢复副本？', `<p class="body-copy">这条本机恢复副本将被永久删除，之后无法通过回收站恢复。</p><div class="form-actions"><button class="button" data-action="trash">返回回收站</button><button class="button danger" data-action="confirm-purge">永久删除</button></div>`);
   if (modal.type === 'confirm-delete') return modalShell(`删除${modal.kind === 'project' ? '项目' : '笔记'}`, `<p class="body-copy">确定删除「${esc(modal.title)}」吗？${modal.kind === 'project' ? '项目内的任务会一起删除，关联笔记仍保留在知识库中。' : '笔记将从所有关联项目中移除。'}删除前会保存本机恢复副本，可在“数据与备份 → 本机回收站”恢复。</p><div class="form-actions"><button class="button" data-action="close-modal">取消</button><button class="button danger" data-action="confirm-delete">确认删除</button></div>`);
-  if (modal.type === 'confirm-import') return modalShell('导入为独立副本', `<p class="body-copy">将导入 ${importCandidate.projects.length} 个项目和 ${importCandidate.notes.length} 篇笔记。现有内容会保留；导入的项目和笔记会标记“（导入）”，并使用新的 ID 保持副本间的关联。</p><div class="notice">本次导入仅包含项目、任务、笔记及自定义属性；当前视图设置保持不变。笔记图片会随副本一并导入。</div><div class="form-actions"><button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="confirm-import">导入副本</button></div>`);
+  if (modal.type === 'confirm-import') return modalShell('导入为独立副本', `<p class="body-copy">将导入 ${importCandidate.projects.length} 个项目、${importCandidate.notes.length} 篇笔记和 ${importCandidate.reviews.length} 份复盘。现有内容会保留；导入的项目和笔记会标记“（导入）”，并使用新的 ID 保持副本间的关联。</p><div class="notice">本次导入包含项目、任务、笔记、复盘及自定义属性；当前视图设置保持不变。笔记图片会随副本一并导入。</div><div class="form-actions"><button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="confirm-import">导入副本</button></div>`);
   return '';
 }
 function searchResults(query) {
@@ -700,8 +702,8 @@ function render() {
   const scrollTop = $('.drawer-scroll')?.scrollTop || 0;
   const current = route(), project = current.kind === 'project' && getProject(current.id), note = current.kind === 'note' && getNote(current.id);
   rememberRecent(current);
-  document.title = `拾序 · ${project?.title || note?.title || { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹' }[current.section]}`;
-  $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${current.kind === 'new-note' ? newNotePage() : note ? renderNotePage({ note, notes: data.notes, templates: data.templates, esc, icon, fullWidth: noteFullWidth }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
+  document.title = `拾序 · ${project?.title || note?.title || { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹', reviews: '复盘' }[current.section]}`;
+  $('#app').innerHTML = `<div class="app-shell">${sidebar()}<div class="main-wrap">${topbar()}${storageError ? `<div class="storage-warning" role="alert">${esc(storageError)} · <button data-action="settings">导出当前内容</button></div>` : ''}<main id="main">${current.section === 'reviews' ? renderReviews(data, reviewState) : current.kind === 'new-note' ? newNotePage() : note ? renderNotePage({ note, notes: data.notes, templates: data.templates, esc, icon, fullWidth: noteFullWidth }) : `${mobileCategories()}${current.section === 'projects' ? projectsPage() : notesPage(current.section === 'inbox')}`}</main>${mobileNav()}</div></div>`;
   sidebarControls.refresh();
   $('#overlay-root').innerHTML = `${project || modal ? '<div class="overlay" data-action="dismiss"></div>' : ''}${project ? projectDrawer(project) : ''}${modalMarkup()}`;
   descriptionEditors.mount(document);
@@ -1158,7 +1160,7 @@ async function importData() {
   }
   for (const n of incoming.notes) { n.id = uid(); n.title = `${n.title.slice(0, 194)}（导入）`; n.projectIds = n.projectIds.map(id => projectIds.get(id)); }
   const folders = incoming.folders.filter(folder => !data.folders.some(existing => existing.section === folder.section && existing.name === folder.name)).map(folder => ({ ...folder, id: uid() }));
-  const combined = { ...data, projects: [...data.projects, ...incoming.projects], notes: [...data.notes, ...incoming.notes], fields: [...data.fields, ...incoming.fields], folders: [...data.folders, ...folders], templates: importCommonTemplates(data.templates, incoming.templates, uid) };
+  const combined = { ...data, projects: [...data.projects, ...incoming.projects], notes: [...data.notes, ...incoming.notes], fields: [...data.fields, ...incoming.fields], folders: [...data.folders, ...folders], reviews: [...data.reviews, ...incoming.reviews.map(r => ({ ...r, id: uid(), title: `${r.title.slice(0, 194)}（导入）` }))], templates: importCommonTemplates(data.templates, incoming.templates, uid) };
   try { validateData(combined); } catch { toast('导入后会超出原型容量，请减少备份中的记录或属性数量。'); return; }
   const previous = data; data = combined; const saved = save();
   if (!saved) { data = previous; return; }
@@ -1334,3 +1336,44 @@ document.addEventListener('focusout', event => {
   if (event.target.matches('input,textarea,select') && !event.target.closest('#sync-dialog')) setTimeout(() => { if (canSyncWorkspace()) void syncClient.syncNow(); }, 0);
 });
 document.fonts.ready.then(wirePretext);
+
+// Reviews use the same durable workspace and sync pipeline as other records.
+document.addEventListener('input', event => {
+  const input = event.target.closest('[data-review-field]');
+  if (!input) return;
+  const page = input.closest('.reviews-page');
+  let record = data.reviews.find(r => r.id === page.dataset.reviewId);
+  if (!record) {
+    if (data.reviews.length >= 10000) { toast('复盘数量已达上限，请先导出整理。'); return; }
+    const period = reviewPeriod(reviewState.mode, reviewState.date);
+    record = { id: uid(), mode: reviewState.mode, date: period, title: period + ' ' + { daily: '每日复盘', weekly: '周度复盘', monthly: '月度总览' }[reviewState.mode], values: {}, updatedAt: new Date().toISOString() };
+    data.reviews.push(record); page.dataset.reviewId = record.id; reviewState.selected = record.id;
+  }
+  record.values[input.dataset.reviewField] = input.value;
+  const saved = save(record);
+  page.querySelector('.review-save').textContent = saved ? '已保存到本机' : '尚未保存，请导出备份';
+  page.querySelector('.review-completion').textContent = '已填写 ' + Object.values(record.values).filter(value => value.trim()).length + ' 项';
+});
+document.addEventListener('click', event => {
+  const mode = event.target.closest('[data-review-mode]');
+  const step = event.target.closest('[data-review-step]');
+  const today = event.target.closest('[data-review-today]');
+  const day = event.target.closest('[data-review-open-day]');
+  if (!mode && !step && !today && !day) return;
+  if (mode) reviewState.mode = mode.dataset.reviewMode;
+  if (step) {
+    if (reviewState.mode === 'monthly') reviewState.date = Math.max(1900, Math.min(9998, Number(reviewState.date.slice(0, 4)) + Number(step.dataset.reviewStep))) + '-01-01';
+    else reviewState.date = shiftDate(reviewState.date, Number(step.dataset.reviewStep) * (reviewState.mode === 'weekly' ? 7 : 1));
+  }
+  if (today) reviewState.date = dateKey();
+  if (day) { reviewState.mode = 'daily'; reviewState.date = day.dataset.reviewOpenDay; }
+  reviewState.selected = null; render();
+});
+document.addEventListener('change', event => {
+  if (event.target.id === 'review-date') {
+    if (!event.target.value || !event.target.validity.valid) return;
+    reviewState.date = reviewState.mode === 'monthly' ? event.target.value + '-01-01' : event.target.value;
+    reviewState.selected = null; render();
+  }
+  if (event.target.id === 'review-copy') { reviewState.selected = event.target.value; render(); }
+});
