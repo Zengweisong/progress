@@ -51,7 +51,7 @@ export function createSyncUI(client, { space = 'main' } = {}) {
       }
     }
     const field = (label, value) => `<div class="sync-record-field"><dt>${esc(label)}</dt><dd>${esc(value === '' || value === undefined || value === null ? '未填写' : value)}</dd></div>`;
-    const names = { projects: '项目', notes: '笔记', fields: '自定义属性', folders: '二级分类', templates: '常用模板' };
+    const names = { projects: '项目', notes: '笔记', fields: '自定义属性', folders: '二级分类', templates: '常用模板', reviews: '复盘' };
     const statusNames = { planned: '待开始', active: '进行中', review: '待回顾', done: '已完成' };
     const priorityNames = { high: '高优先级', medium: '中优先级', low: '低优先级' };
     const typeNames = { text: '文本', number: '数字', date: '日期', checkbox: '复选框' };
@@ -70,6 +70,7 @@ export function createSyncUI(client, { space = 'main' } = {}) {
         return `<dl class="sync-record">${field('笔记标题', record.title)}${field('正文', record.body)}${field('标签', (record.tags || []).join('、') || '无标签')}${field('分类', record.category)}${field('收藏', (record.favorite ?? record.inbox) ? '已收藏' : '未收藏')}${field('关联项目', related.join('、') || '未关联项目')}</dl>`;
       }
       if (item.collection === 'fields') return `<dl class="sync-record">${field('属性名称', record.name)}${field('属性类型', typeNames[record.type] || '未设类型')}</dl>`;
+      if (item.collection === 'reviews') return `<dl class="sync-record">${field('复盘', record.title)}${field('内容', Object.values(record.values).join('\n'))}</dl>`;
       if (item.collection === 'templates') return `<dl class="sync-record">${field('模板名称', record.title)}${field('简介', record.description)}${field('正文', record.body)}</dl>`;
       if (item.collection === 'folders') return `<dl class="sync-record">${field('分类名称', record.name)}${field('所属位置', { projects: '我的项目', knowledge: '知识库', inbox: '收藏夹' }[record.section])}</dl>`;
       return `<dl class="sync-record">${field('内容', record.title || record.name || '记录已修改')}</dl>`;

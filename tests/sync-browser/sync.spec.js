@@ -45,6 +45,24 @@ async function secondDevice(browser, username) {
   return { context, page };
 }
 
+test('review canvases sync between devices and survive reload', async ({ page, browser }) => {
+  const username = name(); await page.goto('/#reviews'); await account(page, username, true, 'merge');
+  await page.getByLabel('发生了什么', { exact: true }).fill('跨设备回看今天');
+  await page.getByRole('heading', { name: '复盘', exact: true }).click();
+  await sync(page);
+  const other = await secondDevice(browser, username);
+  try {
+    await other.page.goto('/#reviews');
+    await expect(other.page.getByLabel('发生了什么', { exact: true })).toHaveValue('跨设备回看今天');
+    await other.page.getByLabel('下一步行动', { exact: true }).fill('明天继续尝试');
+    await other.page.getByRole('heading', { name: '复盘', exact: true }).click();
+    await sync(other.page); await sync(page);
+    await expect(page.getByLabel('下一步行动', { exact: true })).toHaveValue('明天继续尝试');
+    await page.reload();
+    await expect(page.getByLabel('发生了什么', { exact: true })).toHaveValue('跨设备回看今天');
+  } finally { await other.context.close(); }
+});
+
 test('image references hydrate on another device and deleted notes can be restored and synced again', async ({ page, browser }) => {
   const username = name(); await page.goto('/'); await account(page, username, true, 'merge');
   const other = await secondDevice(browser, username);

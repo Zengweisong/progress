@@ -1,0 +1,55 @@
+import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+
+test('daily canvas persists, weekly links and monthly entries keep independent content', async ({ page }, info) => {
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/#reviews');
+  await expect(page.getByRole('heading', { name: '复盘', exact: true })).toBeVisible();
+  await page.getByLabel('发生了什么', { exact: true }).fill('今天第一次主动分享了方案');
+  await page.getByLabel('当时的想法和感受', { exact: true }).fill('一开始紧张，后来觉得很有收获');
+  await page.getByLabel('下一步行动', { exact: true }).fill('下一次先准备三个要点');
+  await page.reload();
+  await expect(page.getByLabel('发生了什么', { exact: true })).toHaveValue('今天第一次主动分享了方案');
+  await expect(page.locator('.review-completion')).toHaveText('已填写 3 项');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: `.tools/reviews-${info.project.name}.png`, fullPage: true });
+  await page.getByRole('tab', { name: '周度复盘' }).click();
+  await page.getByLabel('一周回望', { exact: true }).fill('试着更主动地表达');
+  await expect(page.locator('.review-daily-excerpt')).toContainText('今天第一次主动分享了方案');
+  await page.getByRole('button', { name: '1 篇画布' }).click();
+  await expect(page.getByLabel('下一步行动', { exact: true })).toHaveValue('下一次先准备三个要点');
+  await page.getByRole('tab', { name: '月度总览' }).click();
+  await page.getByLabel('11月内心', { exact: true }).fill('更有信心了');
+  await page.getByLabel('复盘日期', { exact: true }).fill('2025');
+  await page.getByLabel('复盘日期', { exact: true }).press('Tab');
+  await expect(page.getByLabel('11月内心', { exact: true })).toHaveValue('');
+  await page.getByLabel('复盘日期', { exact: true }).fill('2026');
+  await page.getByLabel('复盘日期', { exact: true }).press('Tab');
+  await expect(page.getByLabel('11月内心', { exact: true })).toHaveValue('更有信心了');
+  await page.locator('[data-theme-toggle]').click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: `.tools/reviews-month-dark-${info.project.name}.png`, fullPage: true });
+  const reviews = await page.evaluate(() => JSON.parse(localStorage.getItem('shixu.workspace.v1')).reviews);
+  expect(reviews).toHaveLength(3);
+  expect(errors).toEqual([]);
+});
+
+test('complete backup exports reviews and imports independent selectable copies', async ({ page }) => {
+  await page.goto('/#reviews');
+  await page.getByLabel('发生了什么', { exact: true }).fill('保存在备份中的事件');
+  await page.getByRole('button', { name: '查看本机保存与备份状态', exact: true }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: /导出完整数据/ }).click();
+  const file = await (await download).path();
+  const backup = JSON.parse(await readFile(file, 'utf8'));
+  expect(backup.reviews[0].values.event).toBe('保存在备份中的事件');
+  await page.locator('#import-file').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)) });
+  await page.getByRole('button', { name: '导入副本', exact: true }).click();
+  await expect(page.locator('#review-copy option')).toHaveCount(2);
+  const copies = await page.evaluate(() => JSON.parse(localStorage.getItem('shixu.workspace.v1')).reviews);
+  expect(copies[0].id).not.toBe(copies[1].id);
+  await page.locator('#review-copy').selectOption(copies[1].id);
+  await page.getByLabel('发生了什么', { exact: true }).fill('独立副本');
+  await page.locator('#review-copy').selectOption(copies[0].id);
+  await expect(page.getByLabel('发生了什么', { exact: true })).toHaveValue('保存在备份中的事件');
+});

@@ -39,7 +39,7 @@ async function fixture(t, options = {}) {
     const response = await fetch(`${origin}${path}`, {
       method,
       headers: {
-        'X-Shixu-Templates': '1',
+        'X-Shixu-Templates': '1', 'X-Shixu-Reviews': '1',
         ...(unsafe ? { Origin: options.publicOrigin || origin, 'X-Shixu-Request': '1', 'Content-Type': 'application/json' } : {}),
         ...(cookie ? { Cookie: cookie } : {}),
         ...headers,
@@ -91,6 +91,7 @@ test('conditional workspace reads omit unchanged payloads and isolate accounts, 
   assert.equal(unchanged.status, 304); assert.equal(unchanged.data, null);
   assert.equal((await f.request('/api/workspace?space=lab', { cookie: alice.cookie, headers: { 'If-None-Match': etag } })).status, 200);
   assert.equal((await f.request('/api/workspace', { cookie: alice.cookie, headers: { 'If-None-Match': etag, 'X-Shixu-Templates': '' } })).status, 200);
+  assert.equal((await f.request('/api/workspace', { cookie: alice.cookie, headers: { 'If-None-Match': etag, 'X-Shixu-Reviews': '' } })).status, 200);
   const bob = await f.register('bob');
   assert.equal((await f.request('/api/workspace', { cookie: bob.cookie, headers: { 'If-None-Match': etag } })).status, 200);
   assert.equal((await f.request('/api/workspace', { headers: { 'If-None-Match': etag } })).status, 401);
@@ -107,9 +108,9 @@ test('legacy uploads preserve customized common templates while saving other edi
   data.templates[0].order = 1; data.templates[1].order = 0;
   const first = await f.request('/api/workspace?space=main', { method: 'PUT', cookie: alice.cookie, body: { expectedRevision: 0, data } });
   assert.equal(first.status, 200);
-  const legacy = structuredClone(data); delete legacy.templates;
+  const legacy = structuredClone(data); delete legacy.templates; delete legacy.reviews;
   legacy.notes[0].body = '旧页面仍能保存笔记';
-  const legacyHeaders = { 'X-Shixu-Templates': '' };
+  const legacyHeaders = { 'X-Shixu-Templates': '', 'X-Shixu-Reviews': '' };
   const second = await f.request('/api/workspace?space=main', { method: 'PUT', cookie: alice.cookie, headers: legacyHeaders, body: { expectedRevision: 1, data: legacy } });
   assert.equal(second.status, 200);
   assert.deepEqual(second.data.data, legacy, 'A legacy client can confirm its upload without unknown collections keeping it pending');
@@ -125,6 +126,24 @@ test('legacy uploads preserve customized common templates while saving other edi
   const modern = structuredClone(loaded.data.data); modern.templates = seedData().templates;
   const third = await f.request('/api/workspace?space=main', { method: 'PUT', cookie: alice.cookie, body: { expectedRevision: 2, data: modern } });
   assert.equal(third.status, 200); assert.deepEqual(third.data.data.templates, modern.templates);
+});
+
+test('review-aware clients sync canvas data and legacy saves preserve it without exposing unknown collections', async t => {
+  const f = await fixture(t), alice = await f.register(), data = seedData();
+  data.reviews.push({ id: 'daily-test', title: '每日复盘', mode: 'daily', date: '2026-11-04', values: { event: '值得记住的一天' }, updatedAt: '2026-11-04T01:00:00Z' });
+  const first = await f.request('/api/workspace', { method: 'PUT', cookie: alice.cookie, body: { expectedRevision: 0, data } });
+  assert.equal(first.status, 200);
+  assert.deepEqual(first.data.data.reviews, data.reviews);
+  const legacyHeaders = { 'X-Shixu-Reviews': '' };
+  const old = await f.request('/api/workspace', { cookie: alice.cookie, headers: legacyHeaders });
+  assert.equal(old.data.data.reviews, undefined);
+  old.data.data.notes[0].title = '旧客户端的修改';
+  const saved = await f.request('/api/workspace', { method: 'PUT', cookie: alice.cookie, headers: legacyHeaders, body: { expectedRevision: 1, data: old.data.data } });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.data.reviews, undefined);
+  const loaded = await f.request('/api/workspace', { cookie: alice.cookie });
+  assert.deepEqual(loaded.data.data.reviews, data.reviews);
+  assert.equal(loaded.data.data.notes[0].title, '旧客户端的修改');
 });
 
 test('workspace CAS, concurrent writers, tenant and layout-space isolation', async t => {
