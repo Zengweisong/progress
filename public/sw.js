@@ -1,4 +1,4 @@
-const CACHE = 'shixu-shell-v29';
+const CACHE = 'shixu-shell-v30';
 const SHELL = [
   '/', '/index.html', '/layouts.html', '/designs.html', '/favicon.svg',
   '/reviews.js', '/reviews.css',
