@@ -2,6 +2,7 @@
 .sidebar { overflow-y: auto; overscroll-behavior-y: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .sidebar > * { flex-shrink: 0; }
 .sidebar .workspace { margin-bottom: 12px; }
+.sidebar > nav > .nav-item { gap: 8px; padding-inline: 10px; }
 .sidebar-shortcuts { display: grid; gap: 2px; margin: 0 0 22px; padding: 0 3px 15px; border-bottom: 1px solid var(--line); }
 .sidebar-shortcuts .nav-item { gap: 10px; min-height: 36px; margin: 0; padding: 7px 11px; font-size: 12px; }
 .sidebar-shortcuts kbd { margin-left: auto; background: transparent; font-size: 10px; }
